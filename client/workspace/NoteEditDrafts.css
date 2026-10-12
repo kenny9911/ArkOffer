@@ -1,0 +1,87 @@
+.note-edit-form {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.note-edit-scope {
+  padding: 12px 14px;
+  background: #f5f3ed;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.note-edit-notice {
+  padding: 10px 14px;
+  background: #edf7f0;
+  border-radius: 8px;
+}
+.note-edit-preview,
+.note-edit-history {
+  border-top: 1px solid #e5e7e6;
+  margin-top: 22px;
+  padding-top: 18px;
+}
+.note-edit-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.note-edit-comparison > div {
+  min-width: 0;
+}
+.note-edit-comparison pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  border: 1px solid #e5e7e6;
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+.note-edit-evidence summary {
+  cursor: pointer;
+}
+.note-edit-evidence blockquote {
+  border-left: 3px solid #cdded4;
+  margin: 14px 0;
+  padding-left: 12px;
+  overflow-wrap: anywhere;
+}
+.note-edit-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+.note-edit-history li + li {
+  border-top: 1px solid #eee;
+}
+.note-edit-history li button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 14px;
+  text-align: left;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.note-edit-history li span {
+  font-size: 12px;
+  color: #626962;
+}
+@media (max-width: 650px) {
+  .note-edit-comparison {
+    grid-template-columns: 1fr;
+  }
+  .note-edit-history li button {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

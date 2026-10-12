@@ -1,0 +1,156 @@
+.application-review {
+  padding: 24px;
+  margin-top: 24px;
+  color: var(--text);
+}
+.application-review h3 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.application-review h4 {
+  margin: 0 0 8px;
+}
+.application-review p {
+  line-height: 1.6;
+}
+.application-review-heading {
+  margin-bottom: 20px;
+}
+.application-review-field {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0;
+}
+.application-review select,
+.application-review textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line, #deded8);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.application-review textarea {
+  resize: vertical;
+}
+.application-review fieldset {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid var(--line, #deded8);
+  border-radius: 10px;
+  min-width: 0;
+}
+.application-review legend {
+  font-size: 15px;
+  font-weight: 650;
+  padding: 0 6px;
+}
+.application-review-criterion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  gap: 12px;
+  align-items: center;
+}
+.application-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.application-review-notice {
+  background: #f7f2e6;
+  color: #65512e;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+.application-review-error {
+  color: #a02d2d;
+}
+.application-review-muted,
+.application-review small {
+  color: var(--muted, #65655f);
+  font-size: 12px;
+}
+.application-review-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 250px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line, #deded8);
+  border-radius: 8px;
+}
+.application-review-picker label,
+.application-review-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+.application-review-picker small {
+  display: block;
+}
+.application-review input[type="checkbox"] {
+  margin-top: 4px;
+  flex: 0 0 auto;
+  accent-color: #436a45;
+}
+.application-review-check {
+  margin: 16px 0;
+  font-size: 13px;
+}
+.application-review-history {
+  border-top: 1px solid var(--line, #deded8);
+  padding-top: 20px;
+  margin-top: 24px;
+}
+.application-review-result article {
+  margin: 20px 0;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line, #deded8);
+}
+.application-review-result h4 span {
+  color: var(--muted, #65655f);
+  font-weight: 400;
+  font-size: 12px;
+}
+.application-review blockquote {
+  margin: 12px 0;
+  padding: 6px 15px;
+  border-left: 3px solid #7e9e70;
+  white-space: pre-wrap;
+}
+.application-review summary {
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.application-review pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  padding: 14px;
+  background: #f5f6f2;
+  color: #333a31;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+@media (max-width: 700px) {
+  .application-review {
+    padding: 16px;
+  }
+  .application-review-criterion {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line, #deded8);
+  }
+}

@@ -1,0 +1,57 @@
+.job-drafting {
+  display: grid;
+  gap: 20px;
+}
+.job-drafting fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+.job-draft-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.job-draft-history-title,
+.job-draft-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.job-draft-list {
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+}
+.job-draft-list li {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 9px 0;
+}
+.job-draft-preview {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+.job-draft-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+}
+.job-draft-confirm input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+}
+@media (max-width: 650px) {
+  .job-draft-fields {
+    grid-template-columns: 1fr;
+  }
+}
