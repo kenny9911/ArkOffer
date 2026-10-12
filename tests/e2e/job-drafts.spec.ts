@@ -36,6 +36,7 @@ test("job AI drafting explains missing provider setup and leaves manual job crea
     .getByRole("button", { name: "Create job post", exact: true })
     .first()
     .click();
+  await page.getByRole("button", { name: /Start from scratch/ }).click();
   await page.getByLabel("Job title", { exact: true }).fill("Manual role");
   await page
     .getByLabel("Job description", { exact: true })
@@ -134,4 +135,74 @@ test("private job draft preview requires approval, preserves reviewed edits and 
   const jobs = (await (await page.request.get("/api/jobs")).json()).items;
   expect(jobs).toHaveLength(1);
   expect(jobs[0].status).toBe("draft");
+});
+
+test("job drafting retries keep one request ID while a lost-response draft is running", async ({
+  page,
+  baseURL,
+}) => {
+  await signup(page, baseURL);
+  const draft = {
+    id: crypto.randomUUID(),
+    jobId: null,
+    title: "Retry role",
+    status: "running",
+    sourceCurrent: true,
+    error: null,
+    model: "synthetic",
+    createdAt: new Date().toISOString(),
+    result: null as null | {
+      description: string;
+      suggestions: string[];
+      missingDetails: string[];
+    },
+  };
+  const ids: string[] = [];
+  await page.route("**/api/job-drafts", async (route) => {
+    if (route.request().method() === "POST") {
+      ids.push(route.request().postDataJSON().requestId);
+      if (ids.length === 1) {
+        await route.abort("connectionfailed");
+        return;
+      }
+      if (ids.length === 3) {
+        draft.status = "ready";
+        draft.result = {
+          description: "Reviewed retry draft",
+          suggestions: [],
+          missingDetails: [],
+        };
+      }
+      await route.fulfill({ json: { item: draft, reused: true } });
+    } else
+      await route.fulfill({
+        json: { available: true, items: ids.length ? [draft] : [] },
+      });
+  });
+  await page.goto("/app/job-posts");
+  await page
+    .getByRole("button", { name: "AI job drafts", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "AI job drafts" });
+  await dialog
+    .getByLabel("Draft job title", { exact: true })
+    .fill("Retry role");
+  await dialog
+    .getByLabel("Role brief", { exact: true })
+    .fill("Build reliable APIs");
+  const generate = dialog.getByRole("button", {
+    name: "Generate private draft",
+  });
+  await generate.click();
+  await expect.poll(() => ids.length).toBe(1);
+  await expect(generate).toBeEnabled();
+  await generate.click();
+  await expect(dialog).toContainText("This draft is still running");
+  await expect(generate).toBeEnabled();
+  await generate.click();
+  await expect(dialog.getByLabel("Proposed job description")).toHaveValue(
+    "Reviewed retry draft",
+  );
+  expect(ids).toHaveLength(3);
+  expect(new Set(ids).size).toBe(1);
 });

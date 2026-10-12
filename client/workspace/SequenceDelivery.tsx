@@ -317,7 +317,7 @@ export default function SequenceDelivery({
                             ? `${step.delayDays} days after launch`
                             : `${step.delayDays} days after previous step`}
                         </p>
-                        <strong>{step.subject}</strong>
+                        <strong>{step.subject || "Manual task"}</strong>
                         {!!step.cc?.length && (
                           <p>
                             <b>Cc:</b> {step.cc.join(", ")}
@@ -575,7 +575,8 @@ export default function SequenceDelivery({
                           })
                         }
                       >
-                        Step {item.stepIndex + 1}: {item.subject}
+                        Step {item.stepIndex + 1}:{" "}
+                        {item.subject || "Manual task"}
                       </button>
                       <p style={{ margin: "5px 0", fontSize: 13 }}>
                         {statusLabel(item.status)}

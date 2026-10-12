@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { FileSpreadsheet, Plus, RefreshCw } from "lucide-react";
 import "./ai-reports.css";
+import ReportDrafting from "./ReportDrafting";
+import ReportPresentation, {
+  initialPresentation,
+  type Aggregation,
+} from "./ReportPresentation";
 
 type Column = {
   id: string;
@@ -20,6 +25,8 @@ type View = Definition & {
   id: string;
   revision: number;
   unavailableSourceCount?: number;
+  presentation?: typeof initialPresentation;
+  presentationRevision?: number;
 };
 type Source = {
   id: string;
@@ -38,6 +45,7 @@ type Cell = {
   error: string | null;
 };
 type Run = {
+  aggregation?: Aggregation;
   id: string;
   revision: number;
   status: string;
@@ -215,6 +223,7 @@ export default function AiReports() {
   const [index, setIndex] = useState<Index | null>(null),
     [detail, setDetail] = useState<Detail | null>(null),
     [selected, setSelected] = useState("");
+  const [drafting, setDrafting] = useState(false);
   const [editing, setEditing] = useState(false),
     [draft, setDraft] = useState<Definition>(freshDefinition),
     [revision, setRevision] = useState<number | null>(null);
@@ -317,6 +326,7 @@ export default function AiReports() {
       setDetail(null);
     }
     setEditing(true);
+    setDrafting(false);
     setError("");
     setMessage("");
     setConsent(false);
@@ -429,6 +439,28 @@ export default function AiReports() {
                     Only you can see this view, its answers, and your
                     annotations. Every run checks your current source access.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setDrafting(!drafting)}
+                    disabled={busy}
+                  >
+                    {drafting ? "Hide drafting agent" : "Draft report with AI"}
+                  </button>
+                  {drafting && (
+                    <ReportDrafting
+                      viewId={revision ? selected : undefined}
+                      revision={revision || undefined}
+                      editorIdentity={JSON.stringify(draft)}
+                      onClose={() => setDrafting(false)}
+                      onUse={(proposal) => {
+                        setDraft({ ...proposal, sourceIds: draft.sourceIds });
+                        setDrafting(false);
+                        setMessage(
+                          "Proposal applied to the editor. Review columns, filters and selected sources before saving.",
+                        );
+                      }}
+                    />
+                  )}
                   <label>
                     Report name
                     <input
@@ -752,6 +784,23 @@ export default function AiReports() {
                       </div>
                     ))}
                   </div>
+                  <ReportPresentation
+                    key={`${detail.item.id}:${run?.id || "definition"}:${detail.item.presentationRevision || 1}`}
+                    viewId={detail.item.id}
+                    revision={detail.item.presentationRevision || 1}
+                    saved={detail.item.presentation || initialPresentation}
+                    columns={run?.columns || detail.item.columns}
+                    aggregation={run?.aggregation}
+                    runId={run?.id}
+                    onSaved={async () => {
+                      await loadDetail(selected);
+                      await loadIndex();
+                      setMessage(
+                        "Presentation saved. No extraction was started.",
+                      );
+                    }}
+                    onError={setError}
+                  />
                   <div className="ai-report-run-box">
                     <strong>
                       Run scope: up to {detail.item.sourceIds.length}{" "}

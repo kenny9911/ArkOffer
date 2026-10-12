@@ -96,6 +96,11 @@ async function fixture(configured = true) {
       const body = JSON.parse(String(init?.body));
       calls.push(body);
       const answer = await handler(body, init?.signal);
+      if (body.stream)
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: typeof answer === "string" ? answer : JSON.stringify(answer) }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
       return new Response(
         JSON.stringify({
           choices: [
@@ -771,6 +776,372 @@ test("shutdown drains an aborted extraction before storage closes and never resu
     assert.equal(f.calls.length, 1);
   } finally {
     release?.({ cells: [] });
+    await f.close();
+  }
+});
+
+test("presentation revisions do not cancel extraction, and grouped CSV filters changed sources", async () => {
+  const f = await fixture();
+  try {
+    const second = f.note("Private hidden source");
+    const columns = [
+      {
+        id: "group",
+        name: "Department",
+        instruction: "Documented department",
+        type: "text",
+      },
+      {
+        id: "amount",
+        name: "Amount",
+        instruction: "Documented amount and currency",
+        type: "currency",
+      },
+    ];
+    const view = await f.create(
+      f.definition({ sourceIds: [f.first.id, second.id], columns }),
+    );
+    const run = await f.run(view);
+    const presentation = {
+      mode: "bar",
+      groupBy: "group",
+      operation: "sum",
+      metric: "amount",
+    };
+    let response = await f.request(`/${view.id}/presentation`, "PATCH", {
+      revision: 1,
+      presentation,
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    const saved = await response.json();
+    assert.equal(saved.item.revision, 1);
+    assert.equal(saved.item.presentationRevision, 2);
+    assert.equal(saved.runs[0].status, "queued");
+    assert.equal(f.calls.length, 0);
+    assert.equal(
+      (
+        await f.request(`/${view.id}/presentation`, "PATCH", {
+          revision: 1,
+          presentation,
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await f.request(
+          `/${view.id}/presentation`,
+          "PATCH",
+          { revision: 2, presentation },
+          f.member.cookie,
+        )
+      ).status,
+      404,
+    );
+    f.setHandler((body) => ({
+      cells: JSON.parse(body.messages[1].content).columns.map(
+        (column: any) => ({
+          columnId: column.id,
+          value:
+            column.id === "group"
+              ? "=Engineering"
+              : { amount: 100, currency: "USD" },
+          evidence: [{ quote }],
+        }),
+      ),
+    }));
+    await f.tick();
+    let result = (await f.detail(view)).runs[0];
+    assert.equal(result.aggregation.groups[0].value, 200);
+    assert.equal(result.aggregation.groups[0].unit, "USD");
+    f.change(second, { archived: true });
+    result = (await f.detail(view)).runs[0];
+    assert.equal(result.aggregation.groups[0].value, 100);
+    assert.equal(result.aggregation.counts.unavailable, 1);
+    response = await f.request(`/${view.id}/runs/${run.id}/grouped.csv`);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /"'=Engineering"/);
+    assert.doesNotMatch(text, /Private hidden source|200/);
+    assert.equal(
+      (
+        await f.request(
+          `/${view.id}/runs/${run.id}/grouped.csv`,
+          "GET",
+          undefined,
+          f.member.cookie,
+        )
+      ).status,
+      404,
+    );
+    await f.request(`/${view.id}`, "PATCH", {
+      revision: 1,
+      definition: f.definition({
+        columns: [
+          {
+            id: "new",
+            name: "New",
+            instruction: "New instruction",
+            type: "number",
+          },
+        ],
+      }),
+    });
+    result = (await f.detail(view)).runs[0];
+    assert.equal(
+      result.aggregation.compatible,
+      true,
+      "historical grouping uses the original run's column snapshot",
+    );
+    await f.request(`/${view.id}/presentation`, "PATCH", {
+      revision: 2,
+      presentation: {
+        mode: "bar",
+        groupBy: null,
+        operation: "sum",
+        metric: "new",
+      },
+    });
+    result = (await f.detail(view)).runs[0];
+    assert.equal(
+      result.aggregation.compatible,
+      false,
+      "new-only columns cannot be applied to old results",
+    );
+    assert.equal(
+      (await f.request(`/${view.id}/runs/${run.id}/grouped.csv`)).status,
+      409,
+    );
+    assert.equal(
+      (
+        await f.request(`/${view.id}/presentation`, "PATCH", {
+          revision: 3,
+          runId: randomUUID(),
+          presentation,
+        })
+      ).status,
+      404,
+    );
+    const restored = await f.request(`/${view.id}/presentation`, "PATCH", {
+      revision: 3,
+      runId: run.id,
+      presentation,
+    });
+    assert.equal(restored.status, 200, await restored.clone().text());
+    assert.equal(
+      (await restored.json()).runs[0].aggregation.groups[0].value,
+      100,
+    );
+    assert.equal(
+      (await f.request(`/${view.id}/runs/${run.id}/grouped.csv`)).status,
+      200,
+    );
+    assert.equal(
+      f.calls.length,
+      2,
+      "Restoring a historical chart does not buy extraction",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("report proposals are prompt-only private drafts with explicit apply, stale checks and durable replay identity", async () => {
+  const f = await fixture();
+  try {
+    const view = await f.create();
+    const proposal = {
+      name: "Team report",
+      question: "What team size was documented?",
+      columns: [
+        {
+          name: "Team size",
+          instruction: "Return documented team size, else null.",
+          type: "number",
+        },
+      ],
+      filters: { title: "", from: "", to: "" },
+      notes: ["Review source selection."],
+    };
+    f.setHandler(() => proposal);
+    const input = {
+      requestId: randomUUID(),
+      brief: "Report on documented engineering team sizes.",
+      consent: true,
+      viewId: view.id,
+      revision: 1,
+    };
+    assert.equal(
+      (await f.request("/drafts", "POST", { ...input, consent: false })).status,
+      400,
+    );
+    const response = await f.request("/drafts", "POST", input);
+    assert.equal(response.status, 201, await response.clone().text());
+    const draft = (await response.json()).item;
+    assert.deepEqual(JSON.parse((f.calls[0] as any).messages[1].content), {
+      brief: input.brief,
+    });
+    assert.equal(
+      f.store.db.prepare("SELECT COUNT(*) AS n FROM ai_report_views").get()?.n,
+      1,
+    );
+    assert.equal(
+      (await f.request("/drafts", "GET", undefined, f.member.cookie)).status,
+      200,
+    );
+    assert.deepEqual(
+      (
+        await (
+          await f.request("/drafts", "GET", undefined, f.member.cookie)
+        ).json()
+      ).items,
+      [],
+    );
+    assert.equal(
+      (
+        await f.request(
+          `/drafts/${draft.id}/apply`,
+          "POST",
+          { confirm: true },
+          f.member.cookie,
+        )
+      ).status,
+      404,
+    );
+    assert.equal(
+      (await f.request(`/drafts/${draft.id}/apply`, "POST", { confirm: false }))
+        .status,
+      400,
+    );
+    const applied = await f.request(`/drafts/${draft.id}/apply`, "POST", {
+      confirm: true,
+    });
+    assert.equal(applied.status, 200);
+    assert.deepEqual((await applied.json()).definition.sourceIds, []);
+    assert.equal(
+      f.store.db.prepare("SELECT COUNT(*) AS n FROM ai_report_runs").get()?.n,
+      0,
+    );
+    assert.equal((await f.request("/drafts", "POST", input)).status, 200);
+    assert.equal(f.calls.length, 1);
+    assert.equal(
+      (
+        await f.request("/drafts", "POST", {
+          ...input,
+          brief: "A different valid report brief.",
+        })
+      ).status,
+      409,
+    );
+    await f.request(`/${view.id}`, "PATCH", {
+      revision: 1,
+      definition: f.definition({ name: "Changed report" }),
+    });
+    assert.equal(
+      (await f.request(`/drafts/${draft.id}/apply`, "POST", { confirm: true }))
+        .status,
+      409,
+    );
+    const listed = (await (await f.request("/drafts")).json()).items[0];
+    assert.equal(listed.sourceCurrent, false);
+    assert.equal(listed.result, null);
+    await f.request(`/drafts/${draft.id}`, "DELETE");
+    assert.equal((await f.request("/drafts", "POST", input)).status, 410);
+    assert.equal(f.calls.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("report draft budget survives deletion and rejects source IDs or fabricated output", async () => {
+  const f = await fixture();
+  try {
+    const input = {
+      requestId: randomUUID(),
+      brief: "Report on documented engineering team sizes.",
+      consent: true,
+    };
+    assert.equal(
+      (
+        await f.request("/drafts", "POST", {
+          ...input,
+          sourceIds: [f.first.id],
+        })
+      ).status,
+      400,
+    );
+    f.setHandler(() => ({ name: "Invalid", sourceIds: [f.first.id] }));
+    assert.equal((await f.request("/drafts", "POST", input)).status, 502);
+    const draft = (await (await f.request("/drafts")).json()).items[0];
+    assert.equal(draft.status, "failed");
+    await f.request(`/drafts/${draft.id}`, "DELETE");
+    for (let i = 0; i < 14; i++)
+      f.store.db
+        .prepare("INSERT INTO report_ai_attempts VALUES(?,?,?,?)")
+        .run(randomUUID(), f.owner.workspaceId, f.owner.id, Date.now());
+    assert.equal(
+      (
+        await f.request("/drafts", "POST", {
+          ...input,
+          requestId: randomUUID(),
+        })
+      ).status,
+      429,
+    );
+    assert.equal(f.calls.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("report draft in-flight replays do not buy another request and stale generation is discarded", async () => {
+  const f = await fixture();
+  let release!: (value: unknown) => void;
+  try {
+    const view = await f.create();
+    let begin!: () => void;
+    const started = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    f.setHandler(() => {
+      begin();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    const input = {
+      requestId: randomUUID(),
+      brief: "Report on documented engineering team sizes.",
+      consent: true,
+      viewId: view.id,
+      revision: 1,
+    };
+    const pending = f.request("/drafts", "POST", input);
+    await started;
+    const replay = await f.request("/drafts", "POST", input);
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json()).item.status, "running");
+    assert.equal(f.calls.length, 1);
+    await f.request(`/${view.id}`, "PATCH", {
+      revision: 1,
+      definition: f.definition({ name: "Edited during generation" }),
+    });
+    release({
+      name: "Team report",
+      question: "What team size?",
+      columns: [
+        { name: "Team size", instruction: "Return team size", type: "number" },
+      ],
+      filters: { title: "", from: "", to: "" },
+      notes: [],
+    });
+    assert.equal((await pending).status, 409);
+    assert.equal(
+      (await (await f.request("/drafts")).json()).items[0].result,
+      null,
+    );
+  } finally {
+    release?.({});
     await f.close();
   }
 });

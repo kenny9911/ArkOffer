@@ -210,6 +210,7 @@ test("agent proposals stay private, are idempotent, and cannot save or launch a 
   assert.equal(draft.result.steps[0].kind, "linkedin_message");
   assert.equal(f.settings()?.timeoutMs, 120_000);
   assert.equal(f.settings()?.maxTokens, 4500);
+  assert.equal(f.settings()?.stream, true);
   assert.ok(f.settings()?.signal instanceof AbortSignal);
   assert.equal(f.store.list(f.owner.workspaceId, "sequences").length, 0);
   assert.equal(
@@ -239,6 +240,46 @@ test("agent proposals stay private, are idempotent, and cannot save or launch a 
       .status,
     404,
   );
+});
+
+test("agent accepts subjectless manual channels but requires email and InMail subjects", async (t) => {
+  const f = await fixture(t);
+  const draft = JSON.parse(proposal());
+  draft.steps = [
+    "linkedin_message",
+    "linkedin_connection",
+    "sms",
+    "call",
+    "task",
+  ].map((kind, index) => ({
+    kind,
+    body: "Hello {{firstName}}",
+    delayDays: index ? 2 : 0,
+    ...(index ? { subject: "" } : {}),
+  }));
+  f.setComplete(async () => JSON.stringify(draft));
+  const ready = (
+    await (
+      await f.call(f.owner.cookie, "sequence-drafts", "POST", f.input())
+    ).json()
+  ).item;
+  assert.equal(ready.status, "ready");
+  assert.ok(
+    ready.result.steps.every(
+      (step: { subject: string }) => step.subject === "",
+    ),
+  );
+  for (const kind of ["email", "manual_email", "linkedin_inmail"]) {
+    draft.steps = [{ kind, subject: "", body: "Hello", delayDays: 0 }];
+    const failed = (
+      await (
+        await f.call(f.owner.cookie, "sequence-drafts", "POST", f.input())
+      ).json()
+    ).item;
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.result, null);
+  }
+  assert.equal(f.store.list(f.owner.workspaceId, "sequences").length, 0);
 });
 
 test("agent preserves safe provider errors and idempotent failures without exposing unexpected error details", async (t) => {

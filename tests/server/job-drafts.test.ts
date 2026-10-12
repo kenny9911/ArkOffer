@@ -8,7 +8,7 @@ import express from "express";
 import { createDatabase } from "../../server/db.js";
 import { hashToken } from "../../server/auth.js";
 import { registerJobDrafts } from "../../server/job-drafts.js";
-import type { createAi } from "../../server/ai.js";
+import { AiError, type createAi } from "../../server/ai.js";
 
 const proposal = () =>
   JSON.stringify({
@@ -316,6 +316,38 @@ test("provider failures and invalid output persist an explicit failure without m
     f.store.get(f.owner.workspaceId, "jobs", job.id)?.description,
     "Existing description",
   );
+});
+test("job drafting keeps sanitized deadline details but hides unexpected provider errors", async (t) => {
+  const f = await fixture(t);
+  for (const error of [
+    new AiError("The AI provider took too long to respond. Please try again."),
+    new Error("secret provider credential"),
+  ]) {
+    f.setComplete(async () => {
+      throw error;
+    });
+    const input = {
+      requestId: randomUUID(),
+      details: { title: "Synthetic role" },
+      brief: "Create a concise role description.",
+    };
+    const response = await f.call(f.owner.cookie, "job-drafts", "POST", input);
+    assert.equal(response.status, 502);
+    const failure = await response.json();
+    assert.doesNotMatch(failure.error, /secret/);
+    if (error instanceof AiError) assert.equal(failure.error, error.message);
+    const before = f.calls();
+    const replay = await (
+      await f.call(f.owner.cookie, "job-drafts", "POST", input)
+    ).json();
+    assert.equal(replay.item.status, "failed");
+    assert.equal(replay.item.result, null);
+    assert.doesNotMatch(replay.item.error, /secret/);
+    if (error instanceof AiError)
+      assert.equal(replay.item.error, error.message);
+    assert.equal(f.calls(), before);
+  }
+  assert.equal(f.store.list(f.owner.workspaceId, "jobs").length, 0);
 });
 test("changes to the job, session, workspace or allowlist during generation discard the late result", async (t) => {
   for (const change of ["job", "session", "workspace", "allowlist"]) {

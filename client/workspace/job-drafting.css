@@ -55,3 +55,20 @@
     grid-template-columns: 1fr;
   }
 }
+.job-draft-source {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px;
+}
+.job-draft-source summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.job-draft-source pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  max-height: 240px;
+  overflow: auto;
+}

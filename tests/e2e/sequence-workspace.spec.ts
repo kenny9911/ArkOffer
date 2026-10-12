@@ -106,7 +106,7 @@ test("agent suggestions require explicit apply and save; edits made during gener
       steps: [
         {
           kind: "linkedin_message",
-          subject: "Connect",
+          subject: "",
           body: "Hello {{firstName}}",
           delayDays: 0,
         },
@@ -157,6 +157,12 @@ test("agent suggestions require explicit apply and save; edits made during gener
   ).toHaveLength(0);
   await page.getByRole("button", { name: "Apply draft to editor" }).click();
   await expect(page.getByLabel("Step 1 type")).toHaveValue("linkedin_message");
+  await expect(page.getByLabel("Step 1 subject", { exact: true })).toHaveValue(
+    "",
+  );
+  await expect(
+    page.getByText("Task title (optional)", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Step 2 body", { exact: true })).toHaveValue(
     "Would you like to learn more?",
   );
