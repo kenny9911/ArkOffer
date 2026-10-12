@@ -28,6 +28,9 @@ import {
 } from "lucide-react";
 import "./business.css";
 import CandidateEnrichment from "./CandidateEnrichment";
+import AiReports from "./AiReports";
+import ApplicationReview from "./ApplicationReview";
+import JobDrafting from "./JobDrafting";
 import SequenceDelivery from "./SequenceDelivery";
 
 type Item = {
@@ -1602,6 +1605,7 @@ function Applications() {
         All statuses are set by your team. ArkOffer does not automatically rank
         or reject applicants.
       </p>
+      <ApplicationReview applications={applications.items} />
       {editing && (
         <ApplicationForm
           item={editing === "new" ? undefined : editing}
@@ -2504,6 +2508,7 @@ function ScreeningPreview({
 function Jobs() {
   const jobs = useResource("jobs");
   const applications = useResource("applications");
+  const [drafting, setDrafting] = useState<Item | "new" | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [editing, setEditing] = useState<Item | "new" | null>(null);
@@ -2523,10 +2528,16 @@ function Jobs() {
           <h2>Make the next opportunity a clear one.</h2>
           <p>Write job descriptions and keep your open roles organized.</p>
         </div>
-        <Btn onClick={() => setEditing("new")}>
-          <Plus size={16} />
-          Create job post
-        </Btn>
+        <div className="business-actions">
+          <Btn secondary onClick={() => setDrafting("new")}>
+            <Sparkles size={16} />
+            AI job drafts
+          </Btn>
+          <Btn onClick={() => setEditing("new")}>
+            <Plus size={16} />
+            Create job post
+          </Btn>
+        </div>
       </div>
       <div className="business-panel">
         <div className="business-panel-toolbar">
@@ -2652,6 +2663,16 @@ function Jobs() {
             <Btn
               secondary
               onClick={() => {
+                setDrafting(preview);
+                setPreview(null);
+              }}
+            >
+              <Sparkles size={15} />
+              Improve with AI
+            </Btn>
+            <Btn
+              secondary
+              onClick={() => {
                 setEditing(preview);
                 setPreview(null);
               }}
@@ -2661,6 +2682,14 @@ function Jobs() {
             </Btn>
           </div>
         </Dialog>
+      )}
+      {drafting && (
+        <JobDrafting
+          key={drafting === "new" ? "new" : drafting.id}
+          job={drafting === "new" ? undefined : drafting}
+          onClose={() => setDrafting(null)}
+          onApplied={() => jobs.reload()}
+        />
       )}
       {deleting && (
         <Confirm
@@ -3058,6 +3087,7 @@ function Reports() {
           </p>
         </>
       )}
+      <AiReports />
       {saving && (
         <SimpleNameDialog
           title="Save report"

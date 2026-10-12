@@ -37,6 +37,10 @@ import { createAi, AiError } from "./ai.js";
 import { registerVoiceScreening } from "./voice-screening.js";
 import { registerEnrichment } from "./enrichment.js";
 import { registerSlack } from "./slack.js";
+import { registerJobDrafts } from "./job-drafts.js";
+import { registerNoteEditing } from "./note-editing.js";
+import { registerApplicationReview } from "./application-review.js";
+import { registerReportViews } from "./report-views.js";
 import { registerTeam } from "./team.js";
 import { registerCalendar } from "./calendar.js";
 import { createMailTransport } from "./mail.js";
@@ -747,6 +751,10 @@ export function createApp(options: AppOptions = {}) {
     next();
   });
   registerKnowledge(app, store, {}, knowledge);
+  registerJobDrafts(app, store, { ai });
+  registerNoteEditing(app, store, { ai });
+  registerApplicationReview(app, store, { ai });
+  app.locals.reportViews = registerReportViews(app, store, { ai });
 
   function refreshIdentity(req: Request) {
     const current = sessionUser(store, req);

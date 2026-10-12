@@ -45,6 +45,63 @@ Deleting a collection removes its ID from current conversations while preserving
 - `DELETE /api/conversations/:id/shares/:shareId` → `{ok:true}`.
 - Public `GET /api/shared/:token` → `{item}`. Read-only conversation evidence; no source files or workspace membership.
 
+## Private note-edit drafts
+
+All routes require a current session and conversation access; writes additionally require edit access. Draft reads and actions are restricted to their author in the active workspace. Drafts are separate from conversation resource JSON and public shares.
+
+- `GET /api/conversations/:id/note-edits` → `{items,sourceFingerprint,aiAvailable}`. Fetch the fingerprint after pending note saves finish.
+- `POST /api/conversations/:id/note-edits`: `{requestId,sourceFingerprint,target,operation,instructions?,pronounInstructions?,find?,replacement?}` → `{item}` (201 for a new ready draft). `requestId` is a UUID. `target` is `{kind:"section",sectionId}`, `{kind:"tldr"}`, `{kind:"summary"}` or `{kind:"summary-and-transcript"}`. AI operations are `shorten|expand|bullets|paragraphs|custom`, supported only for a section or TLDR; custom requires instructions. `replace` requires nonempty `find` and a `replacement` string, which may be empty. It replaces every exact case-sensitive literal match in the chosen scope without a provider.
+- `POST /api/conversations/:id/note-edits/:draftId/apply`: `{}` → `{item,draft,alreadyApplied}`. Client-supplied proposed text is rejected; only the persisted server draft applies.
+- `POST /api/conversations/:id/note-edits/:draftId/discard`: `{}` → `{item}`. Applied or generating drafts cannot be discarded.
+
+Drafts expose `id,target,operation,instructions,before,proposed,evidence,status,error,createdAt,updatedAt,versionId,sourceFingerprint`; whole-note replacement also returns `changes` for field-by-field review. Evidence entries have `source:"notes"|"transcript"` and an exact `quote`. Status is `generating|ready|failed|applied|discarded`. The same request ID and input return the persisted state (202 while generating, otherwise 200); changed input returns 409. A hash-only request ledger prevents generation replay after draft retention expires (410). An interrupted request is marked failed when it expires, with an unknown provider outcome rather than fabricated success.
+
+The fingerprint covers the full conversation and its saved versions, and is checked before generation, after provider completion and on apply. A conflict returns 409 and preserves the current notes. Apply atomically saves the previous version, updates only selected content and marks the draft applied; repeated apply returns the current conversation without overwriting later edits. Limits: 20 drafts per author/workspace per ten-minute window; latest 100 drafts per author/conversation; 100 versions; 30,000 target characters; 60,000 transcript characters for AI edits; 45-second provider deadline; 1 MB resulting conversation.
+
+`summary` changes current section contents and TLDR; `summary-and-transcript` also changes the current transcript. Neither changes titles, metadata names, snippets, historical versions/drafts, exports or other records. This is literal text replacement, not complete data erasure. Optional pronoun wording must be explicitly supplied; the model is instructed not to infer names, gender or pronouns. All generated wording requires preview and human review.
+
+## Private job-description drafts
+
+- `GET /api/job-drafts?jobId=<uuid>` → `{available,items}` for the current author/workspace; `jobId` is optional.
+- `POST /api/job-drafts`: `{requestId,jobId?,sourceVersion?,details?,brief,companyContext?,tone?}` → `{item}` (201). Existing jobs require their current `updatedAt` as `sourceVersion` and must omit `details`. New jobs require `details:{title,department?,location?,employmentType?,salary?,description?}`. `tone` is `clear|warm|formal`; default `clear`. Brief and company context are each limited to 10,000 characters.
+- `POST /api/job-drafts/:id/apply`: `{confirm:true,description}` → `{item,alreadyApplied?}`. Description is the explicitly reviewed, possibly user-edited text, 1–50,000 characters. A new job gets `status:"draft"`; an existing job retains all other fields and status.
+- `DELETE /api/job-drafts/:id` → `{ok:true}`. Cancels/discards active results or removes retained history; the request-ID ledger remains.
+
+Draft items contain `id,jobId,title,status,result,error,model,sourceCurrent,createdAt`; `result` has `description,suggestions,missingDetails`. States include `running|ready|stale|failed|applied|discarded`. Request UUIDs are author/workspace scoped; matching retries reuse stored results, and deleted/expired requests cannot be regenerated under the same ID. Source changes invalidate the draft before apply. Repeated apply returns the latest job. Limits: 100 retained drafts per author/workspace, two active requests and 30 generation attempts per workspace/hour, plus shared provider response/time limits and the 1 MB resource cap. No external job publishing or ATS write-back occurs.
+
+## Application criteria and evidence assistance
+
+Job criteria are workspace-visible only after explicit approval. Criteria drafts, analysis outputs and reviewer notes are private to the current user/workspace.
+
+- `GET /api/jobs/:id/review-criteria` → `{revision,criteria,setup:{enabled},drafts}`; up to ten recent own criteria drafts.
+- `PUT /api/jobs/:id/review-criteria`: `{revision,approved:true,criteria:[{id,text,importance}]}` → `{revision,criteria}`. Each criterion has a unique UUID, 1–600 character text and `importance:"required"|"preferred"`; one to ten criteria. Revision mismatch returns 409.
+- `POST /api/jobs/:id/review-criteria/draft`: `{requestId,revision}` → `{item}` (201 for new output). Requires a current nonempty job description of at most 30,000 characters. Draft output contains proposed criteria plus provider/model; it does not approve them.
+- `GET /api/applications/:id/review-assistance` → `{jobId,criteria,candidateEvidence,sources,items,setup:{enabled}}`; up to 30 recent own analysis runs. Source choices include only readable, unarchived transcripts.
+- `POST /api/applications/:id/review-assistance`: `{requestId,criteriaRevision,conversationIds,consent:true}` → `{item}` (201 for a new completed run). Select zero to five unique transcript UUIDs; a linked candidate with professional evidence can supply the source when no transcript is selected. The application must reference a job with current approved criteria.
+- `PATCH /api/applications/:id/review-assistance/:runId`: `{notes,reviewed}` → `{item}`. Saves up to 10,000 characters of private human notes and an optional reviewed timestamp; it does not change a hiring decision.
+
+Run items include `id,kind,status,createdAt` and, only while sources/access are current, `output,notes,reviewedAt,error`. Analysis output includes all approved criteria exactly once, with `criterionId,evidence:[{sourceId,quote}],missingInformation,followUp`, the approved criteria/source snapshot, provider/model and `humanReviewRequired:true`. Quotes must match supplied evidence exactly. Candidate source fields are limited to role, company and skills; the combined selected evidence limit is 60,000 characters. Recruiter opinions and previous decisions are not supplied as candidate facts.
+
+Repeated UUIDs return their persisted request state (202 while running, otherwise 200); request mismatches are rejected. Session, membership, application/job/candidate content, criteria revision and transcript access are checked after generation and on later reads/review-note writes. Stale results withhold output and private notes. Limits: ten attempts per user/hour, 50 per workspace/hour, two active requests per workspace, 55-second cancellation deadline and 20 KB provider output. Missing evidence is not a negative assessment. These endpoints do not ingest CVs, rank/score applicants, recommend or automate rejection, change ATS stages, or run continuous review.
+
+## Private AI report views
+
+Definitions, processing runs, values, evidence and annotations are author/workspace scoped and excluded from generic reports and public shares. A definition is `{name,question,sourceIds,columns,filters?}`. Columns are `{id,name,instruction,type}` with a unique 1–64 character alphanumeric/underscore/hyphen ID and `type:"text"|"number"|"boolean"|"currency"`. Filters are `{title?,from?,to?}`: title is a case-insensitive substring; optional `YYYY-MM-DD` dates apply inclusively to the conversation's creation date. The author selects the schema; the question does not automatically build one.
+
+- `GET /api/report-views` → `{items,sources,setup:{configured,model},limits}`.
+- `POST /api/report-views`: definition → `{item,runs}` (201). Saving a view makes no model request.
+- `GET /api/report-views/:id` → `{item,runs}`; latest 25 runs with progress, typed values, source quotations and truncation metadata.
+- `PATCH /api/report-views/:id`: `{revision,definition}` → `{item,runs}`. Rejects stale revisions and cancels in-progress work for the prior definition.
+- `DELETE /api/report-views/:id` → `{ok:true}`; aborts processing and removes that view and its retained results. Budget usage remains recorded.
+- `POST /api/report-views/:id/runs`: `{requestKey,revision,consent:true}` → `{item,reused:false}` (202). Matching request keys return the stored run with `reused:true`; mismatched view/revision returns 409. Requires the configured, allowed shared text provider.
+- `POST /api/report-views/:id/runs/:runId/cancel`: `{}` → `{item}`.
+- `PATCH /api/report-views/:id/runs/:runId/cells/:cellId`: `{annotation}` → `{ok:true}`; annotation is at most 4,000 characters. A human annotation does not overwrite the extracted value or evidence.
+- `GET /api/report-views/:id/runs/:runId/export.csv` → permission- and source-checked CSV with formula-injection protection, values, evidence, UTF-16 offsets, annotations and truncation disclosure.
+
+Each run processes up to 20 selected notes × five columns = 100 cells. The provider receives at most 60,000 transcript characters per conversation, with `truncated,includedCharacters,totalCharacters` returned for review. Non-null values require exact transcript quotes. Missing/ambiguous evidence yields `not_documented` and `null`, not a guessed negative. Currency values use `{amount,currency}`. Source title/transcript content and access are rechecked before and after provider work and on reads/exports; unavailable rows return no source title, values or annotations. Run status distinguishes queued/processing/completed outcomes, partial failure, cancellation and interruption.
+
+Limits: 100 views per author/workspace, one active run per author/workspace, 500 cells per user and 2,000 per workspace over 24 hours, bounded 1 MB result data and the shared provider deadline. The one-second server worker resumes stored queued work, but interrupted paid processing requires a new explicitly confirmed run. There is no automatic NLP report builder, shared report-result permission system, subscription or scheduled report delivery.
+
 ## Settings, export, forms
 
 - `GET /api/settings` → `{user,settings}`.
@@ -57,7 +114,7 @@ Deleting a collection removes its ID from current conversations while preserving
 
 ## Provider configuration
 
-Text also supports RoboApply-compatible `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (or `OPENROUTER_API_BASE_URL`), exact `LLM_MODEL`, and `LLM_WORKSPACE_IDS`. If defined, `LLM_WORKSPACE_IDS` supersedes the legacy OpenAI text allowlist even when blank. Audio remains separate. See [provider setup](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+Text also supports RoboApply-compatible `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (or `OPENROUTER_API_BASE_URL`), exact `LLM_MODEL`, and `LLM_WORKSPACE_IDS`. If defined, `LLM_WORKSPACE_IDS` supersedes the legacy OpenAI text allowlist even when blank. Notes, job drafts, application evidence assistance and report columns share this configuration without new keys. Audio remains separate. See [provider setup](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
 
 Direct OpenAI server environment: `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS` (comma-separated workspace UUIDs), `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
 

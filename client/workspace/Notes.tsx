@@ -50,6 +50,7 @@ import {
   type Item,
 } from "../ui";
 import { AccessPanel, ConversationComments } from "./Collaboration";
+import { NoteEditDrafts } from "./NoteEditDrafts";
 
 type Section = { id: string; title: string; content: string };
 export default function Notes() {
@@ -819,10 +820,12 @@ function Conversation({
     [language, setLanguage] = useState(""),
     [transcriptSearch, setTranscriptSearch] = useState("");
   const [templates, setTemplates] = useState<Item[]>([]);
+  const [editTarget, setEditTarget] = useState<string | null>(null);
   const toast = useToast();
   const navigate = useNavigate();
   const queue = useRef(Promise.resolve()),
-    alive = useRef(true);
+    alive = useRef(true),
+    saveFailure = useRef("");
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
@@ -865,10 +868,19 @@ function Conversation({
     setError("");
     queue.current = queue.current.then(async () => {
       try {
-        await api(`conversations/${id}`, json("PATCH", patch));
+        const result = await api(`conversations/${id}`, json("PATCH", patch));
         saved = true;
-        if (alive.current) setSaveState("Saved");
+        if (alive.current) {
+          // Keep new typing while bringing the revision up to date.
+          setNote((current) =>
+            current
+              ? { ...current, updatedAt: result.item.updatedAt }
+              : current,
+          );
+          setSaveState("Saved");
+        }
       } catch (e) {
+        saveFailure.current = (e as Error).message;
         if (alive.current) {
           setSaveState("Save failed");
           setError((e as Error).message);
@@ -1005,6 +1017,20 @@ function Conversation({
         <div className="note-toolbar">
           <button
             disabled={!canEdit}
+            onClick={() =>
+              setEditTarget(
+                tab === "TLDR"
+                  ? "tldr"
+                  : sections[0]
+                    ? `section:${sections[0].id}`
+                    : "tldr",
+              )
+            }
+          >
+            <Sparkles size={15} /> Edit drafts
+          </button>
+          <button
+            disabled={!canEdit}
             onClick={async () => {
               try {
                 const r = await api("templates");
@@ -1099,6 +1125,13 @@ function Conversation({
                         Transcript source
                       </button>
                       <div>
+                        <button
+                          disabled={!canEdit}
+                          aria-label={`Edit ${s.title} with a draft`}
+                          onClick={() => setEditTarget(`section:${s.id}`)}
+                        >
+                          <Sparkles size={12} /> Edit
+                        </button>
                         <button
                           aria-label={`Move ${s.title} up`}
                           disabled={!canEdit || i === 0}
@@ -1206,6 +1239,9 @@ function Conversation({
           ) : tab === "TLDR" ? (
             <section className="note-section">
               <h2>The short version</h2>
+              <Button disabled={!canEdit} onClick={() => setEditTarget("tldr")}>
+                Edit TLDR with a draft
+              </Button>
               <textarea
                 aria-label="TLDR notes"
                 readOnly={!canEdit}
@@ -1846,6 +1882,27 @@ function Conversation({
             </Button>
           </div>
         </Modal>
+      )}
+      {editTarget && (
+        <NoteEditDrafts
+          note={note}
+          initialTarget={editTarget}
+          beforeAction={async () => {
+            await queue.current;
+            if (saveFailure.current)
+              throw new Error(
+                "A note could not be saved. Reload the conversation before creating or applying a draft.",
+              );
+          }}
+          onApplied={async (item) => {
+            setNote((previous) => ({
+              ...item,
+              access: item.access || previous?.access,
+            }));
+            await onChanged();
+          }}
+          onClose={() => setEditTarget(null)}
+        />
       )}
       {modal === "snippet" && (
         <Modal title="New transcript snippet" onClose={() => setModal("")}>
