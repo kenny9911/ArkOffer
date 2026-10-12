@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../server/app.js";
+import { createKnowledgeEngine } from "../../server/knowledge.js";
+import { userById } from "../../server/auth.js";
 import { createDatabase } from "../../server/db.js";
 async function setup(t: any, key: string | null = "") {
   const dir = mkdtempSync(join(tmpdir(), "arkoffer-knowledge-")),
@@ -328,4 +330,173 @@ test("oversized provider answers are rejected without persisting an assistant th
     (await (await call(owner.cookie, "assistant/threads")).json()).items,
     [],
   );
+});
+
+test("shared knowledge engine returns provider mode with exact bounded citations and validates every source", async (t) => {
+  const { owner, note, store } = await setup(t);
+  const sources = [];
+  for (let index = 0; index < 5; index++)
+    sources.push(
+      await note(
+        `Engine evidence ${index}`,
+        "TypeScript systems improve reliability. TypeScript testing improves maintainability. TypeScript supports modern teams. TypeScript extra excerpt.",
+      ),
+    );
+  const user = userById(store, owner.user.id, owner.user.workspaceId)!;
+  const engine = createKnowledgeEngine(store, {
+    mode: "openrouter",
+    complete: async (_user, citations) => {
+      assert.equal(citations.length, 12);
+      return "The supplied TypeScript excerpts describe engineering practices [1].";
+    },
+  });
+  const result = await engine.answer(user, "TypeScript");
+  assert.equal(result.mode, "openrouter");
+  assert.equal(result.citations.length, 12);
+  assert.equal(engine.validateAnswer(user, result), true);
+  for (const source of sources)
+    assert.ok(
+      result.citations.filter(
+        (citation) => citation.conversationId === source.id,
+      ).length <= 3,
+    );
+  assert.equal(
+    Number(
+      store.db.prepare("SELECT count(*) AS n FROM assistant_threads").get()!.n,
+    ),
+    0,
+  );
+  const citation = result.citations[0];
+  assert.equal(
+    engine.validateAnswer(user, {
+      ...result,
+      citations: [{ ...citation, text: "Invented evidence" }],
+    }),
+    false,
+  );
+  assert.equal(
+    engine.validateAnswer(user, {
+      ...result,
+      citations: [{ ...citation, start: citation.start + 1 }],
+    }),
+    false,
+  );
+  assert.equal(
+    engine.validateAnswer(user, {
+      ...result,
+      citations: [{ ...citation, conversationId: "not-a-uuid" }],
+    }),
+    false,
+  );
+  assert.equal(
+    engine.validateAnswer(user, {
+      ...result,
+      citations: [{ ...citation, title: "Changed title" }],
+    }),
+    false,
+  );
+  assert.equal(
+    engine.validateAnswer(user, { ...result, citations: [citation, citation] }),
+    false,
+  );
+  assert.equal(
+    engine.validateAnswer(user, {
+      answer: "An ungrounded claim",
+      mode: "openrouter",
+      citations: [],
+    }),
+    false,
+  );
+  const source = store.get(
+    user.workspaceId,
+    "conversations",
+    citation.conversationId,
+  )!;
+  store.update(user.workspaceId, "conversations", {
+    ...source,
+    archived: true,
+  });
+  assert.equal(engine.validateAnswer(user, result), false);
+  await assert.rejects(
+    engine.answer(user, "TypeScript", [source.id]),
+    /selected source is unavailable/,
+  );
+});
+
+test("shared knowledge engine refreshes role and membership before validation and after generation", async (t) => {
+  const { owner, member, note, store } = await setup(t);
+  const source = await note(
+    "Admin evidence",
+    "TypeScript administration requires careful permissions.",
+  );
+  store.db
+    .prepare(
+      "UPDATE memberships SET role='admin' WHERE workspace_id=? AND user_id=?",
+    )
+    .run(owner.user.workspaceId, member.user.id);
+  const adminSnapshot = userById(
+    store,
+    member.user.id,
+    owner.user.workspaceId,
+  )!;
+  const engine = createKnowledgeEngine(store);
+  const result = await engine.answer(adminSnapshot, "TypeScript", [source.id]);
+  assert.equal(engine.validateAnswer(adminSnapshot, result), true);
+  store.db
+    .prepare(
+      "UPDATE memberships SET role='member' WHERE workspace_id=? AND user_id=?",
+    )
+    .run(owner.user.workspaceId, member.user.id);
+  assert.equal(engine.validateAnswer(adminSnapshot, result), false);
+  await assert.rejects(
+    engine.answer(adminSnapshot, "TypeScript", [source.id]),
+    /selected source is unavailable/,
+  );
+  store.db
+    .prepare(
+      "UPDATE memberships SET role='admin' WHERE workspace_id=? AND user_id=?",
+    )
+    .run(owner.user.workspaceId, member.user.id);
+  const racing = createKnowledgeEngine(store, {
+    complete: async () => {
+      store.db
+        .prepare(
+          "UPDATE memberships SET status='suspended' WHERE workspace_id=? AND user_id=?",
+        )
+        .run(owner.user.workspaceId, member.user.id);
+      return "Sensitive TypeScript evidence [1].";
+    },
+  });
+  await assert.rejects(
+    racing.answer(adminSnapshot, "TypeScript", [source.id]),
+    /Source access changed/,
+  );
+  assert.equal(engine.validateAnswer(adminSnapshot, result), false);
+  await assert.rejects(
+    engine.answer(adminSnapshot, "TypeScript"),
+    /Workspace access is unavailable/,
+  );
+});
+
+test("archiving source evidence hides saved assistant history", async (t) => {
+  const { call, owner, note } = await setup(t);
+  const source = await note(
+    "Archive evidence",
+    "TypeScript archive-sensitive evidence.",
+  );
+  const result = await (
+    await call(owner.cookie, "assistant/ask", "POST", {
+      question: "TypeScript",
+      conversationIds: [source.id],
+    })
+  ).json();
+  assert.equal(result.message.citations.length, 1);
+  await call(owner.cookie, `conversations/${source.id}`, "PATCH", {
+    archived: true,
+  });
+  const history = await (
+    await call(owner.cookie, `assistant/threads/${result.threadId}`)
+  ).json();
+  assert.equal(history.messages[0].mode, "unavailable");
+  assert.doesNotMatch(JSON.stringify(history), /archive-sensitive/);
 });

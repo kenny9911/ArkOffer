@@ -39,6 +39,17 @@ const submissionSchema = z
     consent: z.literal(true, {
       error: "Acknowledge sharing your responses with the hiring team.",
     }),
+    voiceEvidence: z
+      .array(
+        z
+          .object({
+            questionId: z.string().uuid(),
+            turnId: z.string().uuid(),
+          })
+          .strict(),
+      )
+      .max(50)
+      .optional(),
     answers: z
       .array(
         z
@@ -268,6 +279,34 @@ export function registerScreening(app: Express, store: Store) {
           400,
           "Answers must reference each published question at most once.",
         );
+      const voiceEvidence = new Map(
+        (input.voiceEvidence || []).map((item) => [
+          item.questionId,
+          item.turnId,
+        ]),
+      );
+      if (
+        voiceEvidence.size !== (input.voiceEvidence || []).length ||
+        [...voiceEvidence.keys()].some(
+          (id) =>
+            !snapshot.questions.some(
+              (question) => question.id === id && question.type === "text",
+            ),
+        )
+      )
+        return fail(
+          400,
+          "Voice evidence must reference each published text question at most once.",
+        );
+      if (
+        voiceEvidence.size &&
+        !store.db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'screening_voice_turns'",
+          )
+          .get()
+      )
+        return fail(400, "Voice evidence is unavailable.");
       const answers = snapshot.questions.map((question) => {
         const value = byId.get(question.id) || "";
         if (question.required && !value)
@@ -280,11 +319,37 @@ export function registerScreening(app: Express, store: Store) {
           ).includes(value)
         )
           return fail(400, "Select one of the published answer options.");
+        const turnId = voiceEvidence.get(question.id);
+        const turn = turnId
+          ? store.db
+              .prepare(
+                `SELECT transcript, duration_ms, consent_at, transcribed_at
+          FROM screening_voice_turns WHERE id = ? AND publication_id = ? AND workspace_id = ? AND question_id = ? AND state = 'complete'`,
+              )
+              .get(turnId, row.id, row.workspace_id, question.id)
+          : undefined;
+        if (turnId && (!turn || !turn.transcript || !value))
+          return fail(
+            400,
+            "Voice evidence is unavailable for this answer. Record again or submit a typed answer.",
+          );
         return {
           questionId: question.id,
           prompt: question.prompt,
           type: question.type,
           value,
+          ...(turn
+            ? {
+                voiceEvidence: {
+                  originalTranscript: turn.transcript,
+                  durationMs: turn.duration_ms,
+                  consentAt: turn.consent_at,
+                  transcribedAt: turn.transcribed_at,
+                  candidateEdited: value !== String(turn.transcript).trim(),
+                  source: "voice-transcription",
+                },
+              }
+            : {}),
         };
       });
       const submittedAt = new Date().toISOString();

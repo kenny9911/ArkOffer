@@ -2,7 +2,7 @@
 
 The Express server stores workspace data in SQLite at `DATA_DIR/arkoffer.sqlite` and source uploads in `DATA_DIR/uploads`. `DATA_DIR` defaults to `./data`. Run on Node 22.13 or newer. There are no default accounts. Signup creates an independent workspace with 12 editable built-in templates, whether or not demo data is selected. Optional demo conversations and candidates are fictional and use example.com addresses.
 
-Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when frontend and backend origins differ behind a development proxy. Browser mutations require an allowed `Origin` header. The Stripe raw-body webhook is exempt from browser Origin checks and instead requires a valid Stripe signature; calendar callbacks validate one-use session-bound OAuth state. Session authentication uses a seven-day HttpOnly, SameSite=Lax cookie; the database stores only its hash. Production requires HTTPS for the Secure cookie. If an HTTPS reverse proxy terminates TLS, set `TRUST_PROXY=1` only when a trusted proxy is the sole entry point.
+Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when frontend and backend origins differ behind a development proxy. Browser mutations require an allowed `Origin` header. Slack signed command/event routes and the Stripe raw-body webhook are exempt from browser Origin checks and instead require valid provider signatures; calendar callbacks validate one-use session-bound OAuth state. Session authentication uses a seven-day HttpOnly, SameSite=Lax cookie; the database stores only its hash. Production requires HTTPS for the Secure cookie. If an HTTPS reverse proxy terminates TLS, set `TRUST_PROXY=1` only when a trusted proxy is the sole entry point.
 
 ## Authentication
 
@@ -23,7 +23,7 @@ Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when fr
 - `PATCH /:id` with changed fields → `{item}`.
 - `DELETE /:id` → `{ok:true}`.
 
-Conversations and jobs require `title`; the remaining resources require `name`. Applications and screenings also accept a `title`, `candidate`, or `candidateName` in place of a name. Validated custom JSON fields are retained, including template prompts/sections, sequence steps, report filters/columns, and candidate attributes. Server-controlled IDs, timestamps, source-file metadata/storage fields, calendar/ATS/capture provenance, and provider-processing metadata cannot be overwritten. Records and history are scoped to the active session workspace. Conversation and collection routes additionally enforce ownership, workspace visibility and viewer/editor grants; collection permissions apply to their contained conversations. Entire merged records are limited to 1 MB, including successive edits.
+Conversations and jobs require `title`; the remaining resources require `name`. Applications and screenings also accept a `title`, `candidate`, or `candidateName` in place of a name. Validated custom JSON fields are retained, including template prompts/sections, sequence steps, report filters/columns, and candidate attributes. Server-controlled IDs, timestamps, source-file metadata/storage fields, calendar/ATS/capture/enrichment provenance, and provider-processing metadata cannot be overwritten. Records and history are scoped to the active session workspace. Conversation and collection routes additionally enforce ownership, workspace visibility and viewer/editor grants; collection permissions apply to their contained conversations. Entire merged records are limited to 1 MB, including successive edits.
 
 Conversation fields: `title`, `candidate`, `interviewer`, `date`, `duration` (minutes), `transcript`, `sections:[{id,title,content}]`, `tldr`, `status` (`ready|processing|upcoming`), `archived`, `collectionIds`, and read-only `shared`. Collection IDs must belong to the workspace. Every edit automatically saves a historical version; the newest 100 versions are retained. Adding a nonempty transcript to a pending upload changes it to ready. Source metadata is `file:{name,mimeType,size}`; storage paths and file IDs are not exposed. `shared` is computed from currently active, unexpired links.
 
@@ -35,8 +35,8 @@ Deleting a collection removes its ID from current conversations while preserving
 - `GET /api/conversations/:id/file`: authorized source-file attachment download.
 - `GET /api/conversations/:id/media`: authorized inline audio/video playback with byte-range support. Other file types are rejected for inline playback.
 - `POST /api/conversations/:id/transcribe`: `{}` → `{item,mode:"openai"}`. Requires `OPENAI_API_KEY` and the current workspace in `OPENAI_WORKSPACE_IDS`, a supported audio/video upload of at most 25 MB, and a successful provider response. Otherwise returns a clear error without fabricating text.
-- `POST /api/conversations/:id/generate`: `{templateId?,format?,length?,language?}` → `{item,mode:"extractive"|"openai",source,preferences}`. `format` is `bullets|paragraphs`; `length` is `concise|standard|detailed`. Supported language values are `original`, `English`, `Chinese`, `French`, `German`, `Spanish`, `Japanese`, `Portuguese`, `Italian`, `Korean`, `Arabic`, `Hindi`, `Dutch`, `Swedish`, `Danish`, `Norwegian`, `Finnish`, `Polish`, `Turkish`, `Indonesian`, `Vietnamese`, and `Thai`. Unknown options are rejected. Per-call options override saved workspace `language`, `noteFormat`, and `noteLength` defaults. With a provider, these choices become explicit model instructions. Without a provider, plain generation preserves the original transcript language and selects 3/8/16 literal excerpts for concise/standard/detailed output, formatted as bullets or paragraphs. Explicit translation and template-based synthesis return 503 without changing existing notes when the provider is absent. Provider requests include up to the first 100,000 transcript characters. `source:{truncated,characters,totalCharacters}` discloses this limit and is persisted as `item.summarySource` alongside `item.summaryMode`. `preferences:{format,length,language,languageBehavior:"original"|"requested_language"}` is also persisted as `item.summaryPreferences`. Concurrent edits during provider requests return 409 instead of being overwritten.
-- `POST /api/conversations/:id/assistant`: `{question}` → `{answer,mode,citations:[{text,start,end}],source}`. Local mode retrieves matching transcript lines; citation offsets refer to the original transcript. OpenAI mode answers against supplied transcript evidence. The same `source` metadata discloses provider clipping; citations only reference text the provider received.
+- `POST /api/conversations/:id/generate`: `{templateId?,format?,length?,language?}` → `{item,mode:"extractive"|"openai"|"openrouter",source,preferences}`. `format` is `bullets|paragraphs`; `length` is `concise|standard|detailed`. Supported language values are `original`, `English`, `Chinese`, `French`, `German`, `Spanish`, `Japanese`, `Portuguese`, `Italian`, `Korean`, `Arabic`, `Hindi`, `Dutch`, `Swedish`, `Danish`, `Norwegian`, `Finnish`, `Polish`, `Turkish`, `Indonesian`, `Vietnamese`, and `Thai`. Unknown options are rejected. Per-call options override saved workspace `language`, `noteFormat`, and `noteLength` defaults. With a provider, these choices become explicit model instructions. Without a provider, plain generation preserves the original transcript language and selects 3/8/16 literal excerpts for concise/standard/detailed output, formatted as bullets or paragraphs. Explicit translation and template-based synthesis return 503 without changing existing notes when the provider is absent. Provider requests include up to the first 100,000 transcript characters. `source:{truncated,characters,totalCharacters}` discloses this limit and is persisted as `item.summarySource` alongside `item.summaryMode`. `preferences:{format,length,language,languageBehavior:"original"|"requested_language"}` is also persisted as `item.summaryPreferences`. Concurrent edits during provider requests return 409 instead of being overwritten.
+- `POST /api/conversations/:id/assistant`: `{question}` → `{answer,mode,citations:[{text,start,end}],source}`. Local mode retrieves matching transcript lines; citation offsets refer to the original transcript. Configured text AI answers against supplied transcript evidence. The same `source` metadata discloses provider clipping; citations only reference text the provider received.
 - `GET /api/conversations/:id/versions` → `{items:[{id,label,createdAt,data}]}`.
 - `POST /api/conversations/:id/versions`: `{label?}` → `{item}` (201).
 - `POST /api/conversations/:id/versions/:versionId/restore`: `{}` → `{item}`. Saves the current version first.
@@ -57,7 +57,9 @@ Deleting a collection removes its ID from current conversations while preserving
 
 ## Provider configuration
 
-Optional server environment: `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS` (comma-separated workspace UUIDs), `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
+Text also supports RoboApply-compatible `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (or `OPENROUTER_API_BASE_URL`), exact `LLM_MODEL`, and `LLM_WORKSPACE_IDS`. If defined, `LLM_WORKSPACE_IDS` supersedes the legacy OpenAI text allowlist even when blank. Audio remains separate. See [provider setup](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+
+Direct OpenAI server environment: `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS` (comma-separated workspace UUIDs), `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
 
 ## Team and workspace identity
 
@@ -112,7 +114,7 @@ Workspace admins and resource owners manage access. Collection viewer/editor acc
 - `DELETE /api/assistant/threads/:id` → `{ok:true}`.
 - `POST /api/assistant/ask`: `{question,threadId?,conversationIds?}` → `{threadId,message}`. Questions are 1–2,000 characters; optional source selection is at most 50 conversation IDs.
 
-Retrieval uses accessible unarchived transcripts and returns at most 12 citations, at most three per conversation, with 900-character excerpts and source offsets. Local mode is labeled extraction; configured, allowed OpenAI may synthesize from that evidence. Threads/history are private to the user/workspace, limited to 100 threads and 100 questions each. Source permissions/text are rechecked after provider calls and on history reads; invalidated answers are withheld. Concurrent questions from one user/workspace are rejected. Provider output is bounded.
+Retrieval uses accessible unarchived transcripts and returns at most 12 citations, at most three per conversation, with 900-character excerpts and source offsets. Local mode is labeled extraction; a configured, allowed text AI provider may synthesize from that evidence. Threads/history are private to the user/workspace, limited to 100 threads and 100 questions each. Source permissions/text are rechecked after provider calls and on history reads; invalidated answers are withheld. Concurrent questions from one user/workspace are rejected. Provider output is bounded.
 
 ## Calendar, ATS and meeting providers
 
@@ -173,3 +175,36 @@ Parsing runs in an isolated worker with a 10-second timeout, a 128 MB JavaScript
 DOCX extraction reads main-document paragraphs and table text, plus headers, footers, footnotes, and endnotes. It preserves text rather than layout and omits deleted text and field instructions. PDF extraction requires a text layer; OCR for scanned PDFs is not implemented. Corrupt, encrypted, empty, or unsupported documents return a clear 422 error; limits return 413 and worker saturation returns 429. Failed uploads are removed and no conversation is created. Documents can instead be supplied with an explicit transcript.
 
 Libraries were selected against their primary documentation: [unpdf](https://github.com/unjs/unpdf), [yauzl](https://github.com/thejoshwolfe/yauzl), and [xmldom](https://github.com/xmldom/xmldom). All declare Node engine ranges that include Node 22, 24, and 26.
+
+## Voice screening
+
+- Public `GET /api/interviews/:token/voice` → `{available,maxSeconds,maxAttemptsPerQuestion,mode,provider,clarification,audioRetention}`; active immutable publication required.
+- Public `POST /api/interviews/:token/voice/transcriptions`: multipart `audio` (canonical mono 16 kHz 16-bit PCM WAV), `questionId`, UUID `requestId`, `consent:"true"`, optional `parentTurnId` → transcript and linked `turnId`, optional clarification. At most two minutes, three attempts per question, 60 per publication, 120 per workspace/hour; consent and active funded workspace required. Repeated request IDs return stored results instead of duplicate billing; interrupted attempts fail explicitly. Client disconnect aborts provider I/O.
+- Existing candidate submission accepts optional `voiceEvidence:[{questionId,turnId}]`. The server validates ownership of complete turns and attaches original transcripts/duration/timestamps/candidate-edited flags to owner-visible responses. Browser-supplied provenance is never trusted. Corrected text remains the submitted answer.
+
+Raw recordings are held only while processing. Optional one-question clarification uses the separately configured text model, without scoring or hiring decisions. Written answers remain available when audio is disabled. Detailed provider setup and retention boundaries are in [RECONSTRUCTION.md](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+
+## Candidate enrichment
+
+- `GET /api/candidates/:id/enrichment` → configuration, eligibility, candidate version and durable run history.
+- `POST /api/candidates/:id/enrichment`: `{requestKey,candidateVersion,consent:true,identifier:"profile"|"workEmail"|"nameCompany",retryOf?,retryConfirmed?:true}` → persisted professional-field proposal or explicit no-match/failure/uncertain state. Admin and allowlisted workspace required. See the returned eligibility reasons before submitting; work-email use requires a confirmed professional address.
+- `POST /api/candidates/:id/enrichment/:runId/apply`: `{fields,candidateVersion,confirm:true}` → updated candidate. Only approved proposal fields apply; provenance remains server-owned.
+
+These endpoints recheck session, role, workspace, candidate identity and version after provider I/O. Request keys are durable; uncertain attempts require explicit retry. No personal phones/home addresses or raw provider payloads are stored. No automatic outreach or candidate judgment occurs.
+
+## Slack integration and personal automation
+
+- `GET /api/slack` → setup/installation/link status, personal schedules and jobs; secrets omitted and draft visibility permission-checked.
+- `POST /api/slack/connect`: `{}` → OAuth URL; owner/admin, configured app and internal/external allowlists required.
+- `GET /api/slack/callback`: session-bound, single-use OAuth state and post-exchange authorization checks.
+- `DELETE /api/slack`: disconnect workspace installation and cancel queued work.
+- `POST /api/slack/link`: `{}` → short-lived `/arkoffer link CODE`; signed Slack command binds the Slack user to the matching active ArkOffer session/member.
+- `DELETE /api/slack/link`: remove personal link and pending work.
+- `PUT /api/slack/schedule`: `{kind:"digest"|"reminder",enabled,hourUtc:0..23,delivery:"draft"|"automatic"}` → `{ok:true}`. Explicit opt-in; default draft mode requires review.
+- `POST /api/slack/drafts`: `{kind:"digest"|"reminder"}` → queued draft ID.
+- `POST /api/slack/jobs/:id/approve`: `{revision}` → queues the exact current, unexpired and permission-checked personal draft.
+- `DELETE /api/slack/jobs/:id`: cancel own active work.
+- Public signed `POST /api/slack/commands`: `/arkoffer link CODE`, `/arkoffer ask QUESTION`, or help. Raw HMAC/timestamp verification, replay handling and bounded parsing precede work.
+- Public signed `POST /api/slack/events`: URL verification and installation/token revocation events.
+
+Answers go only to the explicitly linked requester's private DM. The shared knowledge engine limits evidence and retains proof for every model input source; membership, installation, source permission and exact evidence are checked again before sending. Persistent workers enforce retries only for known transient failures; unknown delivery outcomes require review. No actual Slack messages are sent by repository tests.

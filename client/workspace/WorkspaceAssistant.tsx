@@ -170,7 +170,7 @@ export default function WorkspaceAssistant() {
               <article className="assistant-answer" key={message.id}>
                 <h2>{message.question}</h2>
                 <span className="badge">
-                  {message.mode === "openai"
+                  {["openai", "openrouter"].includes(message.mode)
                     ? "AI answer"
                     : message.mode === "unavailable"
                       ? "Source unavailable"

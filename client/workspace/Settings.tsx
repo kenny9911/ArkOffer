@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import SlackSettings from "./SlackSettings";
 import TeamSettings from "./TeamSettings";
 import CalendarSettings from "./CalendarSettings";
 import BillingSettings from "./BillingSettings";
@@ -207,6 +208,7 @@ export default function Settings() {
             </p>
             <CalendarSettings />
             <ProviderSettings />
+            <SlackSettings />
             <div className="integration-grid">
               {integrations
                 .filter(

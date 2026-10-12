@@ -25,8 +25,10 @@ if (
     console.info(`ArkOffer is listening on http://${host}:${port}`),
   );
   app.locals.outreach.start();
+  app.locals.slack.start();
   const shutdown = () =>
     server.close(async () => {
+      await app.locals.slack.stop();
       await app.locals.outreach.stop();
       await app.locals.account.stop();
       app.locals.store.close();

@@ -1,11 +1,18 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5174,
-    strictPort: true,
-    proxy: { "/api": "http://127.0.0.1:3002" },
-  },
-  build: { outDir: "dist", sourcemap: false },
+export default defineConfig(({ mode }) => {
+  // Read the API port on the server only; never expose copied provider secrets to the client.
+  const env = loadEnv(mode, process.cwd(), "");
+  const port = Number(process.env.PORT || env.PORT || 3002);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("PORT must be a valid API port.");
+  return {
+    plugins: [react()],
+    server: {
+      port: 5174,
+      strictPort: true,
+      proxy: { "/api": `http://127.0.0.1:${port}` },
+    },
+    build: { outDir: "dist", sourcemap: false },
+  };
 });
