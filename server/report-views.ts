@@ -45,6 +45,12 @@ const definitionSchema = z
     filters: z
       .object({
         title: z.string().trim().max(200).default(""),
+        candidate: z.string().trim().max(200).optional(),
+        interviewer: z.string().trim().max(200).optional(),
+        status: z.enum(["", "ready", "processing", "upcoming"]).optional(),
+        dateField: z.enum(["created", "conversation"]).optional(),
+        durationMin: z.number().finite().min(0).max(10080).optional(),
+        durationMax: z.number().finite().min(0).max(10080).optional(),
         from: z
           .string()
           .regex(/^$|^\d{4}-\d{2}-\d{2}$/)
@@ -67,6 +73,13 @@ const definitionSchema = z
   .refine(
     (v) => !v.filters.from || !v.filters.to || v.filters.from <= v.filters.to,
     "The date range is reversed.",
+  )
+  .refine(
+    (v) =>
+      v.filters.durationMin === undefined ||
+      v.filters.durationMax === undefined ||
+      v.filters.durationMin <= v.filters.durationMax,
+    "The duration range is reversed.",
   );
 type Definition = z.infer<typeof definitionSchema>;
 type Column = Definition["columns"][number];
@@ -109,6 +122,15 @@ export function registerReportViews(
     CREATE TABLE IF NOT EXISTS ai_report_sources (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES ai_report_runs(id) ON DELETE CASCADE, source_id TEXT NOT NULL, source_hash TEXT NOT NULL, context_hash TEXT NOT NULL, context_json TEXT NOT NULL, truncated INTEGER NOT NULL, total_characters INTEGER NOT NULL, status TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS ai_report_cells (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES ai_report_runs(id) ON DELETE CASCADE, source_snapshot_id TEXT NOT NULL REFERENCES ai_report_sources(id) ON DELETE CASCADE, column_id TEXT NOT NULL, status TEXT NOT NULL, value_json TEXT, evidence_json TEXT, annotation TEXT NOT NULL DEFAULT '', error TEXT, UNIQUE(source_snapshot_id,column_id));
   `);
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_views)")
+      .all()
+      .some((column) => column.name === "favorite")
+  )
+    store.db.exec(
+      "ALTER TABLE ai_report_views ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+    );
   if (
     !store.db
       .prepare("PRAGMA table_info(ai_report_runs)")
@@ -208,6 +230,15 @@ export function registerReportViews(
         title: String(item.title || "Untitled conversation"),
         createdAt: item.createdAt,
         characters: String(item.transcript || "").length,
+        candidate: typeof item.candidate === "string" ? item.candidate : "",
+        interviewer:
+          typeof item.interviewer === "string" ? item.interviewer : "",
+        date: typeof item.date === "string" ? item.date : "",
+        duration:
+          typeof item.duration === "number" && Number.isFinite(item.duration)
+            ? item.duration
+            : null,
+        status: typeof item.status === "string" ? item.status : "",
       }));
   }
   function publicView(user: User, row: Row) {
@@ -219,6 +250,8 @@ export function registerReportViews(
       unavailableSourceCount: definition.sourceIds.length - ids.length,
       id: row.id,
       revision: row.revision,
+      favorite: Boolean(row.favorite),
+      ownerName: user.name,
       presentation: row.presentation
         ? JSON.parse(String(row.presentation))
         : defaultPresentation,
@@ -321,10 +354,37 @@ export function registerReportViews(
           String(item.title || "")
             .toLowerCase()
             .includes(definition.filters.title.toLowerCase())) &&
+        (!definition.filters.candidate ||
+          String(item.candidate || "")
+            .toLowerCase()
+            .includes(definition.filters.candidate.toLowerCase())) &&
+        (!definition.filters.interviewer ||
+          String(item.interviewer || "")
+            .toLowerCase()
+            .includes(definition.filters.interviewer.toLowerCase())) &&
+        (!definition.filters.status ||
+          item.status === definition.filters.status) &&
+        (definition.filters.durationMin === undefined ||
+          (typeof item.duration === "number" &&
+            item.duration >= definition.filters.durationMin)) &&
+        (definition.filters.durationMax === undefined ||
+          (typeof item.duration === "number" &&
+            item.duration <= definition.filters.durationMax)) &&
         (!definition.filters.from ||
-          item.createdAt.slice(0, 10) >= definition.filters.from) &&
+          String(
+            definition.filters.dateField === "conversation"
+              ? item.date || ""
+              : item.createdAt,
+          ).slice(0, 10) >= definition.filters.from) &&
         (!definition.filters.to ||
-          item.createdAt.slice(0, 10) <= definition.filters.to),
+          (Boolean(
+            definition.filters.dateField !== "conversation" || item.date,
+          ) &&
+            String(
+              definition.filters.dateField === "conversation"
+                ? item.date || ""
+                : item.createdAt,
+            ).slice(0, 10) <= definition.filters.to)),
     );
   }
   function cancelRun(
@@ -424,6 +484,16 @@ export function registerReportViews(
         "UPDATE ai_report_views SET definition=?,revision=revision+1,updated_at=? WHERE id=?",
       )
       .run(JSON.stringify(definition), new Date().toISOString(), id);
+    res.json(detail(user, id));
+  });
+  app.patch("/api/report-views/:id/preferences", (req, res) => {
+    const user = fresh(req),
+      id = String(req.params.id);
+    ownedView(user, id);
+    const input = z.object({ favorite: z.boolean() }).strict().parse(req.body);
+    store.db
+      .prepare("UPDATE ai_report_views SET favorite=? WHERE id=?")
+      .run(Number(input.favorite), id);
     res.json(detail(user, id));
   });
   app.patch("/api/report-views/:id/presentation", (req, res) => {

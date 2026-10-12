@@ -134,7 +134,7 @@ export default function ReportDrafting({
     <aside className="report-drafting" aria-label="Report drafting agent">
       <div className="ai-report-view-heading">
         <div>
-          <h4>Describe your report</h4>
+          <h4>What do you want to report on?</h4>
           <p>
             The agent proposes columns and filters for you to review. Select
             conversations in the editor afterward.
@@ -149,6 +149,28 @@ export default function ReportDrafting({
           {error}
         </p>
       )}
+      <div
+        className="report-prompt-suggestions"
+        aria-label="Report prompt suggestions"
+      >
+        {[
+          "Summarize candidate feedback from my conversations.",
+          "Compare documented team sizes and leadership examples.",
+          "What questions were left unanswered in these interviews?",
+        ].map((prompt) => (
+          <button
+            type="button"
+            key={prompt}
+            disabled={busy}
+            onClick={() => {
+              setBrief(prompt);
+              setConsent(false);
+            }}
+          >
+            {prompt}
+          </button>
+        ))}
+      </div>
       <label>
         Report brief
         <textarea

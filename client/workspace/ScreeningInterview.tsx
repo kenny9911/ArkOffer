@@ -10,6 +10,7 @@ type Question = {
   type: "text" | "yes-no" | "multiple-choice";
   options: string[];
   required: boolean;
+  sectionTitle?: string;
 };
 type Interview = {
   title: string;
@@ -17,6 +18,12 @@ type Interview = {
   workspaceName: string;
   expiresAt: string;
   questions: Question[];
+  setup?: {
+    welcomeMessage: string;
+    completionMessage: string;
+    language: string;
+    voice: string;
+  };
 };
 
 export default function ScreeningInterview() {
@@ -171,6 +178,9 @@ export default function ScreeningInterview() {
                 ? `Your responses have been submitted to ${interview.workspaceName}.`
                 : "This link has already received a response."}
             </p>
+            {justSubmitted && interview.setup?.completionMessage && (
+              <p>{interview.setup.completionMessage}</p>
+            )}
             <p>
               For updates or corrections, contact the hiring team. You can close
               this page.
@@ -184,6 +194,9 @@ export default function ScreeningInterview() {
               </span>
               <h1>{interview.title}</h1>
               {interview.description && <p>{interview.description}</p>}
+              {interview.setup?.welcomeMessage && (
+                <p>{interview.setup.welcomeMessage}</p>
+              )}
               <div>
                 <span>{interview.questions.length} questions</span>
                 <span>
@@ -228,6 +241,8 @@ export default function ScreeningInterview() {
                   key={token}
                   token={token!}
                   questions={interview.questions}
+                  language={interview.setup?.language}
+                  voiceName={interview.setup?.voice}
                   answers={answers}
                   onAnswer={(id, value) =>
                     setAnswers((current) => ({ ...current, [id]: value }))
@@ -258,6 +273,12 @@ export default function ScreeningInterview() {
                       className="screening-interview-question"
                       key={question.id}
                     >
+                      {question.sectionTitle &&
+                        (index === 0 ||
+                          interview.questions[index - 1].sectionTitle !==
+                            question.sectionTitle) && (
+                          <h3>{question.sectionTitle}</h3>
+                        )}
                       <label htmlFor={`answer-${question.id}`}>
                         <span>{String(index + 1).padStart(2, "0")}</span>
                         {question.prompt}

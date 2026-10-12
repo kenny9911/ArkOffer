@@ -227,6 +227,7 @@ export function registerVoiceScreening(
         id: string;
         type: string;
         prompt: string;
+        followUp?: boolean;
       }[];
       if (
         !questions.some((q) => q.id === input.questionId && q.type === "text")
@@ -444,6 +445,8 @@ export function registerVoiceScreening(
         let followup: string | null = null;
         if (
           !parent &&
+          questions.find((question) => question.id === input.questionId)
+            ?.followUp !== false &&
           options.generateClarification &&
           !store.db
             .prepare(

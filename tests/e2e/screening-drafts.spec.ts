@@ -19,29 +19,22 @@ test("screening prompt drafting explains unavailable AI and keeps the manual edi
   baseURL,
 }) => {
   await signup(page, baseURL);
-  await page.goto("/app/screening");
-  await page
-    .getByRole("button", { name: "Draft screening with AI", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Build a screening",
-    exact: true,
-  });
+  await page.goto("/app/screening/new");
+  const dialog = page.locator(".screen-new-body");
   await expect(dialog).toContainText(
     "Text AI is not enabled for this workspace",
   );
   await expect(
     dialog.getByRole("button", { name: "Draft screening", exact: true }),
   ).toBeDisabled();
-  await dialog
-    .getByRole("button", { name: "Close dialog", exact: true })
-    .click();
   await page
-    .getByRole("button", { name: "Create screening", exact: true })
-    .first()
+    .getByRole("button", { name: "Start from scratch", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "Create screening", exact: true }),
+    page.getByRole("tab", { name: "Interview", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByLabel("Screening title", { exact: true }),
   ).toBeVisible();
 });
 
@@ -146,19 +139,14 @@ test("private screening proposal preserves its request through running replays a
       });
     },
   );
-  await page.goto("/app/screening");
-  await page
-    .getByRole("button", { name: "Draft screening with AI", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Build a screening",
-    exact: true,
-  });
+  await page.goto("/app/screening/new");
+  const dialog = page.locator(".screen-new-body");
   await dialog
     .getByLabel("Describe the role", { exact: true })
     .fill(
       "Draft a role-specific screen for a backend engineer building TypeScript services.",
     );
+  await dialog.getByText("Role context and options", { exact: true }).click();
   await dialog
     .getByLabel("Number of questions", { exact: true })
     .selectOption("3");
@@ -200,10 +188,7 @@ test("private screening proposal preserves its request through running replays a
   await expect(useDraft).toBeDisabled();
   await preview.getByLabel(/I reviewed the questions/).check();
   await useDraft.click();
-  const editor = page.getByRole("dialog", {
-    name: "Create screening",
-    exact: true,
-  });
+  const editor = page.locator(".screen-editor");
   await expect(
     editor.getByLabel("Screening title", { exact: true }),
   ).toHaveValue(result.title);
@@ -216,13 +201,10 @@ test("private screening proposal preserves its request through running replays a
     .first()
     .fill("Private reviewer guidance: inspect concrete project evidence.");
   await editor.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(editor).not.toBeVisible();
+  await expect(page).toHaveURL(/\/app\/screening\/[0-9a-f-]+\?tab=builder$/);
+  await expect(page.getByRole("status")).toContainText("Draft saved");
   await page.reload();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
-  const savedEditor = page.getByRole("dialog", {
-    name: "Edit screening",
-    exact: true,
-  });
+  const savedEditor = page.locator(".screen-editor");
   await expect(
     savedEditor.getByLabel("Question text", { exact: true }).first(),
   ).toHaveValue("Tell us about a production reliability improvement you led.");
@@ -231,9 +213,6 @@ test("private screening proposal preserves its request through running replays a
   ).toHaveValue(
     "Private reviewer guidance: inspect concrete project evidence.",
   );
-  await savedEditor
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   const publish = page.getByRole("dialog", {
     name: `Publish ${result.title}`,

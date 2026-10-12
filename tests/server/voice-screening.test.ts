@@ -83,7 +83,7 @@ function request(path: string, method = "GET", data?: unknown, cookie = "") {
     body: data ? JSON.stringify(data) : undefined,
   });
 }
-async function setup() {
+async function setup(followUp?: boolean) {
   clarify = async () => null;
   provider = async (url, init) => {
     calls++;
@@ -107,7 +107,12 @@ async function setup() {
     createdAt: date,
     updatedAt: date,
     questions: [
-      { prompt: "Describe relevant experience.", type: "text", required: true },
+      {
+        prompt: "Describe relevant experience.",
+        type: "text",
+        required: true,
+        ...(followUp === undefined ? {} : { followUp }),
+      },
       { prompt: "Can you use Figma?", type: "yes-no", required: false },
     ],
   });
@@ -642,4 +647,19 @@ test("disconnecting a recording aborts provider work and releases its pending re
       .get(item.publicationId),
     undefined,
   );
+});
+
+test("published follow-up opt-out transcribes evidence without calling the clarification model", async () => {
+  const item = await setup(false);
+  let generated = 0;
+  clarify = async () => {
+    generated++;
+    return "Should not be generated";
+  };
+  const response = await transcribe(item);
+  assert.equal(response.status, 201);
+  const body = await response.json();
+  assert.equal(body.followup, null);
+  assert.equal(body.text, text);
+  assert.equal(generated, 0);
 });

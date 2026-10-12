@@ -85,7 +85,14 @@ async function fixture(t: TestContext) {
     model: "synthetic-model",
     configured: true,
     allowed: () => allowed,
-    complete: async () => {
+    complete: async (_messages, _structured, settings) => {
+      assert.equal(
+        settings?.stream,
+        true,
+        "Screening must keep the gateway stream alive until a complete draft is received",
+      );
+      assert.equal(settings?.timeoutMs, 120000);
+      assert.equal(settings?.maxTokens, 6000);
       calls++;
       return complete();
     },

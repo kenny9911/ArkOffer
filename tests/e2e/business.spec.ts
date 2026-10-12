@@ -246,15 +246,17 @@ test("job descriptions and manual application decisions are editable and persist
 test("screening draft builder and candidate preview preserve questions without collecting responses", async ({
   page,
 }) => {
-  await page.goto("/app/screening");
+  await page.goto("/app/screening/new");
   await page
-    .getByRole("button", { name: "Create screening", exact: true })
-    .first()
+    .getByRole("button", { name: "Start from scratch", exact: true })
     .click();
+  await page.getByRole("tab", { name: "Setup", exact: true }).click();
   await page.getByLabel("Screening title").fill("Designer introduction");
   await page
     .getByLabel("Introduction for candidates")
     .fill("Tell us about your relevant experience.");
+  await page.getByRole("tab", { name: "Interview", exact: true }).click();
+  await page.getByRole("button", { name: "Add question", exact: true }).click();
   await page
     .getByLabel("Question text")
     .fill("What product work are you proud of?");
@@ -269,35 +271,37 @@ test("screening draft builder and candidate preview preserve questions without c
     .fill("Figma\nSketch\nOther");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await page.reload();
-  await expect(page.getByText("2 questions", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Preview", exact: true }).click();
   await page
-    .getByLabel("1. What product work are you proud of? *")
+    .getByRole("button", { name: "Try candidate preview", exact: true })
+    .click();
+  const preview = page.getByRole("dialog", { name: "Candidate preview" });
+  await preview
+    .getByLabel("1. What product work are you proud of?", { exact: true })
     .fill("A thoughtful redesign of an onboarding experience.");
-  await page
-    .getByLabel("2. Which design tool do you use most? *")
+  await preview
+    .getByLabel("2. Which design tool do you use most?", { exact: true })
     .selectOption("Figma");
-  await page
+  await preview
     .getByRole("button", { name: "Finish preview", exact: true })
     .click();
   await expect(page.getByRole("dialog")).toContainText(
-    "Your responses have not been collected or saved.",
+    "These responses have not been collected or saved.",
   );
   await page.getByLabel("Close dialog").click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("tab", { name: "Interview", exact: true }).click();
   await expect(page.getByLabel("Answer options", { exact: false })).toHaveValue(
     "Figma\nSketch\nOther",
   );
+  await page.getByRole("tab", { name: "Setup", exact: true }).click();
   await page
     .getByLabel("Screening title")
     .fill("Updated designer introduction");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Updated designer introduction",
-      exact: true,
-    }),
-  ).toBeVisible();
+  await page.reload();
+  await page.getByRole("tab", { name: "Setup", exact: true }).click();
+  await expect(page.getByLabel("Screening title", { exact: true })).toHaveValue(
+    "Updated designer introduction",
+  );
 });
 
 test("reports aggregate actual records, save filters and export safely escaped CSV", async ({
@@ -322,7 +326,7 @@ test("reports aggregate actual records, save filters and export safely escaped C
     status: "hired",
     notes: '=FORMULA()\nQuoted "note"',
   });
-  await page.goto("/app/reports");
+  await page.goto("/app/reports/analytics");
   await expect(
     page.locator(".business-stat").filter({ hasText: "Hiring conversion" }),
   ).toContainText("100%");
@@ -393,7 +397,7 @@ test("published screening links collect one anonymous response and support priva
       },
     ],
   });
-  await page.goto("/app/screening");
+  await page.goto(`/app/screening/${screening.id}`);
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "Later edits do not change existing links.",
@@ -487,14 +491,17 @@ test("published screening links collect one anonymous response and support priva
     await expect(
       candidate.getByText("taylor@example.com", { exact: true }),
     ).toHaveCount(0);
-    await page.getByRole("button", { name: "Responses", exact: true }).click();
+    await page.getByRole("tab", { name: "Candidates", exact: true }).click();
     await page.getByText("Taylor Example", { exact: true }).click();
-    await expect(page.getByRole("dialog")).toContainText(
+    await expect(
+      page.getByRole("complementary", { name: "Review Taylor Example" }),
+    ).toContainText(
       "I implemented accessible forms and tested the end-to-end workflow.",
     );
-    await expect(page.getByRole("dialog")).toContainText(
-      "Candidate acknowledged sharing these responses",
-    );
+    await expect(
+      page.getByRole("complementary", { name: "Review Taylor Example" }),
+    ).toContainText("Candidate consented on");
+    await page.getByRole("tab", { name: /Candidate links/ }).click();
     await page
       .getByRole("button", { name: "Revoke link", exact: true })
       .click();
@@ -502,7 +509,7 @@ test("published screening links collect one anonymous response and support priva
       .getByRole("button", { name: "Confirm revoke", exact: true })
       .click();
     await expect(
-      page.getByRole("dialog").getByText("revoked", { exact: true }),
+      page.getByRole("cell", { name: "revoked", exact: true }),
     ).toBeVisible();
     await candidate.reload();
     await expect(
@@ -511,8 +518,9 @@ test("published screening links collect one anonymous response and support priva
         exact: true,
       }),
     ).toBeVisible();
+    await page.getByRole("tab", { name: /All candidates/ }).click();
     await expect(
-      page.getByRole("dialog").getByText("Taylor Example", { exact: true }),
+      page.getByRole("button", { name: "Taylor Example", exact: true }),
     ).toBeVisible();
   } finally {
     await candidateContext.close();

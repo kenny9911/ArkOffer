@@ -47,6 +47,8 @@ import { registerReportViews } from "./report-views.js";
 import { registerSourcing } from "./sourcing.js";
 import { registerSequenceDrafts } from "./sequence-drafts.js";
 import { registerScreeningDrafts } from "./screening-drafts.js";
+import { registerScreeningWorkspaces } from "./screening-workspaces.js";
+import { registerScreeningReviews } from "./screening-reviews.js";
 import { registerTeam } from "./team.js";
 import { registerCalendar } from "./calendar.js";
 import { createMailTransport } from "./mail.js";
@@ -766,6 +768,8 @@ export function createApp(options: AppOptions = {}) {
   registerSourcing(app, store, { ai });
   registerSequenceDrafts(app, store, { ai });
   registerScreeningDrafts(app, store, { ai });
+  registerScreeningWorkspaces(app, store);
+  registerScreeningReviews(app, store);
   app.locals.reportViews = registerReportViews(app, store, { ai });
 
   function refreshIdentity(req: Request) {
