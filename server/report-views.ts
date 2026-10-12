@@ -11,6 +11,13 @@ import {
 } from "./auth.js";
 import type { createAi } from "./ai.js";
 import type { Resource, Store } from "./db.js";
+import { registerReportDrafts } from "./report-drafts.js";
+import {
+  aggregateRun,
+  defaultPresentation,
+  presentationIssue,
+  presentationSchema,
+} from "./report-presentation.js";
 
 const LIMITS = {
   notes: 20,
@@ -111,6 +118,27 @@ export function registerReportViews(
     store.db.exec(
       "ALTER TABLE ai_report_runs ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
     );
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_views)")
+      .all()
+      .some((column) => column.name === "presentation")
+  ) {
+    store.db.exec(
+      'ALTER TABLE ai_report_views ADD COLUMN presentation TEXT NOT NULL DEFAULT \'{"mode":"table","groupBy":null,"operation":"count","metric":null}\'',
+    );
+  }
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_views)")
+      .all()
+      .some((column) => column.name === "presentation_revision")
+  ) {
+    store.db.exec(
+      "ALTER TABLE ai_report_views ADD COLUMN presentation_revision INTEGER NOT NULL DEFAULT 1",
+    );
+  }
+  registerReportDrafts(app, store, { ai });
   // A process crash may have sent a paid request. Never retry it automatically.
   store.transaction(() => {
     store.db
@@ -191,6 +219,10 @@ export function registerReportViews(
       unavailableSourceCount: definition.sourceIds.length - ids.length,
       id: row.id,
       revision: row.revision,
+      presentation: row.presentation
+        ? JSON.parse(String(row.presentation))
+        : defaultPresentation,
+      presentationRevision: Number(row.presentation_revision || 1),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -225,8 +257,8 @@ export function registerReportViews(
           .filter((cell) => cell.source_snapshot_id === snapshot.id)
           .map((cell) => ({
             id: cell.id,
-            columnId: cell.column_id,
-            status: cell.status,
+            columnId: String(cell.column_id),
+            status: String(cell.status),
             value: cell.value_json ? JSON.parse(String(cell.value_json)) : null,
             evidence: cell.evidence_json
               ? JSON.parse(String(cell.evidence_json))
@@ -237,7 +269,14 @@ export function registerReportViews(
       };
     });
     // Counts convey progress only; no hidden source titles, results, or annotations.
+    const presentation = JSON.parse(
+      String(ownedView(user, String(row.view_id)).presentation),
+    );
     return {
+      aggregation: aggregateRun(
+        { columns: definition.columns, rows },
+        presentation,
+      ),
       id: row.id,
       revision: row.revision,
       status: row.status,
@@ -386,6 +425,85 @@ export function registerReportViews(
       )
       .run(JSON.stringify(definition), new Date().toISOString(), id);
     res.json(detail(user, id));
+  });
+  app.patch("/api/report-views/:id/presentation", (req, res) => {
+    const user = fresh(req),
+      id = String(req.params.id),
+      view = ownedView(user, id);
+    const input = z
+      .object({
+        revision: z.number().int().positive(),
+        runId: z.uuid().optional(),
+        presentation: presentationSchema,
+      })
+      .strict()
+      .parse(req.body);
+    if (input.revision !== view.presentation_revision)
+      fail(409, "The presentation changed. Reload before saving.");
+    const issue = presentationIssue(
+      input.presentation,
+      JSON.parse(
+        String(
+          input.runId
+            ? ownedRun(user, id, input.runId).definition
+            : view.definition,
+        ),
+      ).columns,
+    );
+    if (issue) fail(400, issue);
+    store.db
+      .prepare(
+        "UPDATE ai_report_views SET presentation=?,presentation_revision=presentation_revision+1,updated_at=? WHERE id=?",
+      )
+      .run(JSON.stringify(input.presentation), new Date().toISOString(), id);
+    res.json(detail(user, id));
+  });
+  app.get("/api/report-views/:id/runs/:runId/grouped.csv", (req, res) => {
+    const user = fresh(req),
+      run = ownedRun(user, String(req.params.id), String(req.params.runId));
+    const data = publicRun(user, run).aggregation;
+    if (!data.compatible) fail(409, data.issue!);
+    const lines: unknown[][] = [
+      [
+        "Group",
+        "Currency",
+        "Operation",
+        "Value",
+        "Conversations",
+        "Documented values",
+        "Not documented",
+        "Pending",
+        "Failed",
+      ],
+    ];
+    for (const group of data.groups)
+      lines.push([
+        group.label,
+        group.unit,
+        data.presentation.operation,
+        group.value,
+        group.rows,
+        group.values,
+        group.notDocumented,
+        group.pending,
+        group.failed,
+      ]);
+    lines.push(
+      [],
+      ["Source availability", "Count"],
+      ["Available", data.counts.available],
+      ["Unavailable", data.counts.unavailable],
+      ["Grouping not documented", data.counts.groupNotDocumented],
+      ["Grouping pending", data.counts.groupPending],
+      ["Grouping failed", data.counts.groupFailed],
+    );
+    res
+      .type("text/csv")
+      .setHeader(
+        "Content-Disposition",
+        'attachment; filename="private-report-groups.csv"',
+      );
+    res.send(lines.map((line) => line.map(csv).join(",")).join("\r\n"));
   });
   app.delete("/api/report-views/:id", (req, res) => {
     const user = fresh(req),

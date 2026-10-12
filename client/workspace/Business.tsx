@@ -31,6 +31,7 @@ import CandidateEnrichment from "./CandidateEnrichment";
 import AiReports from "./AiReports";
 import ApplicationReview from "./ApplicationReview";
 import JobDrafting from "./JobDrafting";
+import JobCreation from "./JobCreation";
 import SequenceWorkspace from "./SequenceWorkspace";
 import SourcingWorkspace from "./SourcingWorkspace";
 import ScreeningDrafting from "./ScreeningDrafting";
@@ -2157,6 +2158,7 @@ function Jobs() {
   const jobs = useResource("jobs");
   const applications = useResource("applications");
   const [drafting, setDrafting] = useState<Item | "new" | null>(null);
+  const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [editing, setEditing] = useState<Item | "new" | null>(null);
@@ -2181,7 +2183,7 @@ function Jobs() {
             <Sparkles size={16} />
             AI job drafts
           </Btn>
-          <Btn onClick={() => setEditing("new")}>
+          <Btn onClick={() => setCreating(true)}>
             <Plus size={16} />
             Create job post
           </Btn>
@@ -2225,7 +2227,7 @@ function Jobs() {
                 : "Create a job post to capture the role, responsibilities and what success looks like."
             }
           >
-            <Btn onClick={() => setEditing("new")}>
+            <Btn onClick={() => setCreating(true)}>
               <Plus size={15} />
               Create job post
             </Btn>
@@ -2281,6 +2283,16 @@ function Jobs() {
         Job posts are stored in this workspace. External job board publishing
         requires a configured integration.
       </p>
+      {creating && (
+        <JobCreation
+          onClose={() => setCreating(false)}
+          onBlank={() => {
+            setCreating(false);
+            setEditing("new");
+          }}
+          onApplied={() => jobs.reload()}
+        />
+      )}
       {editing && (
         <JobForm
           item={editing === "new" ? undefined : editing}

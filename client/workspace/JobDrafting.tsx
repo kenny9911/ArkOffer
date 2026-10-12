@@ -4,6 +4,14 @@ import { api, json, Modal, Field, Button, ErrorBanner } from "../ui";
 import "./job-drafting.css";
 
 type Job = { id: string; [key: string]: unknown };
+export type JobSource = {
+  kind: "template" | "conversation" | "document";
+  id: string;
+  fingerprint: string;
+  title: string;
+  text: string;
+  characters: number;
+};
 type Draft = {
   id: string;
   jobId: string | null;
@@ -22,10 +30,12 @@ type Draft = {
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 export default function JobDrafting({
   job,
+  source,
   onClose,
   onApplied,
 }: {
   job?: Job;
+  source?: JobSource;
   onClose: () => void;
   onApplied: (job: Job) => void;
 }) {
@@ -49,6 +59,13 @@ export default function JobDrafting({
     const data = await api(path, { signal });
     if (mounted.current) {
       setItems(data.items);
+      const selectedItem = data.items.find(
+        (item: Draft) => item.id === selected,
+      );
+      if (selectedItem && !selectedItem.sourceCurrent) {
+        setDescription("");
+        setConfirmed(false);
+      }
       setAvailable(data.available);
       setLoading(false);
     }
@@ -78,7 +95,20 @@ export default function JobDrafting({
     event.preventDefault();
     if (busy) return;
     const form = new FormData(event.currentTarget);
+    const submitter = (event.nativeEvent as SubmitEvent)
+      .submitter as HTMLButtonElement | null;
+    const mode = submitter?.value === "manual" ? "manual" : "ai";
     const body = {
+      mode,
+      ...(source
+        ? {
+            source: {
+              kind: source.kind,
+              id: source.id,
+              fingerprint: source.fingerprint,
+            },
+          }
+        : {}),
       brief: String(form.get("brief") || ""),
       companyContext: String(form.get("companyContext") || ""),
       tone: String(form.get("tone") || "clear"),
@@ -108,7 +138,12 @@ export default function JobDrafting({
       });
       if (!mounted.current) return;
       choose(data.item);
-      request.current = { key: crypto.randomUUID(), hash: "" };
+      if (data.item.status === "running")
+        setError(
+          "This draft is still running. Refresh its history or retry the same request; another generation will not be started.",
+        );
+      if (data.item.status !== "running")
+        request.current = { key: crypto.randomUUID(), hash: "" };
       await load();
     } catch (e) {
       if (mounted.current) {
@@ -166,7 +201,13 @@ export default function JobDrafting({
   }
   return (
     <Modal
-      title={job ? `AI drafting · ${str(job.title)}` : "AI job drafts"}
+      title={
+        job
+          ? `AI drafting · ${str(job.title)}`
+          : source
+            ? "Create job from source"
+            : "AI job drafts"
+      }
       onClose={onClose}
       wide
     >
@@ -176,6 +217,16 @@ export default function JobDrafting({
           private until you apply them to a workspace job post.
         </p>
         <ErrorBanner error={error} />
+        {source && (
+          <details className="job-draft-source">
+            <summary>Selected source: {source.title}</summary>
+            <p className="muted">
+              Review this source before using AI. Only include information
+              appropriate for this job post.
+            </p>
+            <pre>{source.text}</pre>
+          </details>
+        )}
         {loading ? (
           <p role="status">Loading drafts…</p>
         ) : !available ? (
@@ -186,7 +237,7 @@ export default function JobDrafting({
           </p>
         ) : null}
         <form onSubmit={generate}>
-          <fieldset disabled={busy || !available || loading}>
+          <fieldset disabled={busy || (!available && !source) || loading}>
             {!job && (
               <div className="job-draft-fields">
                 <Field label="Draft job title">
@@ -219,7 +270,12 @@ export default function JobDrafting({
               label="Role brief"
               hint="Describe responsibilities, requirements and outcomes. Only include facts you want in the job post."
             >
-              <textarea name="brief" required maxLength={10000} rows={4} />
+              <textarea
+                name="brief"
+                required={!source}
+                maxLength={10000}
+                rows={4}
+              />
             </Field>
             <Field
               label="Company context and writing guidance"
@@ -234,7 +290,28 @@ export default function JobDrafting({
                 <option value="formal">Formal</option>
               </select>
             </Field>
-            <Button type="submit" variant="primary" busy={busy}>
+            {source?.kind === "conversation" && (
+              <p className="muted">
+                Intake calls can include private discussion. Remove participant
+                names, contact details and unrelated information from the
+                description before sharing it with your workspace.
+              </p>
+            )}
+            {source && (
+              <Button type="submit" name="mode" value="manual" busy={busy}>
+                {source.kind === "template"
+                  ? "Use template without AI"
+                  : "Copy source into editable draft"}
+              </Button>
+            )}
+            <Button
+              type="submit"
+              name="mode"
+              value="ai"
+              variant="primary"
+              busy={busy}
+              disabled={!available}
+            >
               <Sparkles size={16} />
               Generate private draft
             </Button>
@@ -291,14 +368,16 @@ export default function JobDrafting({
             {draft.result && (
               <>
                 <p className="muted">
-                  Generated with {draft.model}. Check every statement and edit
-                  before applying. Suggestions do not establish legal
-                  compliance.
+                  {draft.model === "Source copy"
+                    ? "Copied from your selected source."
+                    : `Generated with ${draft.model}.`}{" "}
+                  Check every statement and edit before applying. Suggestions do
+                  not establish legal compliance.
                 </p>
                 <Field label="Proposed job description">
                   <textarea
                     value={description}
-                    maxLength={50000}
+                    maxLength={60000}
                     rows={14}
                     onChange={(e) => {
                       setDescription(e.target.value);
@@ -329,8 +408,8 @@ export default function JobDrafting({
                 )}
                 {!draft.sourceCurrent && (
                   <p role="alert">
-                    The source job changed. Reopen the job preview and generate
-                    a fresh draft to preserve those edits.
+                    The source changed or is no longer accessible. Select and
+                    review it again before making a fresh draft.
                   </p>
                 )}
                 {draft.status === "ready" && (

@@ -824,7 +824,7 @@ test("manual-only sequences support multiple profiles without emails or a config
     steps: [
       {
         kind: "linkedin_connection",
-        subject: "Connect",
+        subject: "",
         body: "Hello {{firstName}}",
         delayDays: 0,
       },
@@ -844,6 +844,7 @@ test("manual-only sequences support multiple profiles without emails or a config
   assert.equal(state.enrollments.length, 2);
   assert.ok(state.enrollments.every((item: any) => item.email === ""));
   assert.ok(state.messages.every((item: any) => item.status === "task_due"));
+  assert.ok(state.messages.every((item: any) => item.subject === ""));
   await f.control(sequence.id, "pause");
   assert.equal((await f.control(sequence.id, "resume")).status, 200);
   assert.ok(

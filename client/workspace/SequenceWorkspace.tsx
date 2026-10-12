@@ -39,6 +39,7 @@ import {
 import SequenceDelivery from "./SequenceDelivery";
 import "./SequenceWorkspace.css";
 import { renderEmailMarkup, safeEmailLink } from "../../shared/email-markup";
+import { sequenceRequiresSubject } from "../../shared/sequence-channels";
 
 type Kind =
   | "email"
@@ -812,7 +813,10 @@ export default function SequenceWorkspace() {
                           </select>
                         </Field>
                         <strong>
-                          {personalize(step.subject) || "No subject yet"}
+                          {personalize(step.subject) ||
+                            (sequenceRequiresSubject(step.kind)
+                              ? "No subject yet"
+                              : "Manual task")}
                         </strong>
                         {step.format === "formatted" ? (
                           <div
@@ -852,17 +856,20 @@ export default function SequenceWorkspace() {
                         <div className="sequence-subject-row">
                           <Field
                             label={
-                              step.kind === "email" ||
-                              step.kind === "manual_email"
+                              sequenceRequiresSubject(step.kind)
                                 ? "Subject"
-                                : "Task title"
+                                : "Task title (optional)"
                             }
                           >
                             <input
                               aria-label={`Step ${index + 1} subject`}
                               maxLength={200}
                               value={step.subject}
-                              placeholder="Enter message subject here"
+                              placeholder={
+                                sequenceRequiresSubject(step.kind)
+                                  ? "Enter message subject here"
+                                  : "Optional label for this task"
+                              }
                               onChange={(event) =>
                                 update(index, { subject: event.target.value })
                               }

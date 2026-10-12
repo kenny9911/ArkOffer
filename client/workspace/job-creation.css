@@ -1,0 +1,118 @@
+.job-creation {
+  display: grid;
+  gap: 20px;
+}
+.job-creation-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.job-creation-choices > button,
+.job-source-list > button,
+.job-document-row > button:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  text-align: left;
+  border: 1px solid #e1e2e4;
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  color: inherit;
+  cursor: pointer;
+}
+.job-creation-choices > button:hover,
+.job-source-list button:hover {
+  background: #f8f8f8;
+  border-color: #b8babd;
+}
+.job-creation button:focus-visible {
+  outline: 2px solid #31343b;
+  outline-offset: 3px;
+}
+.job-creation button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.job-creation-choices span,
+.job-source-list span {
+  display: grid;
+  gap: 7px;
+}
+.job-creation-choices svg,
+.job-source-list svg {
+  flex: none;
+}
+.job-creation small {
+  color: #777b80;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.job-creation-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.job-creation-heading h3 {
+  margin: 0;
+}
+.job-source-list {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 3px;
+}
+.job-source-list > button,
+.job-document-row > button:first-child {
+  padding: 14px;
+}
+.job-source-list button.selected {
+  border-color: #45484e;
+  background: #f2f3f4;
+}
+.job-document-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.job-document-row > button:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.job-source-preview {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 18px;
+}
+.job-source-preview pre {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+  background: #f8f8f8;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 16px;
+}
+.job-source-upload {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed #cacdd0;
+  border-radius: 8px;
+}
+.job-source-upload .btn {
+  justify-self: start;
+}
+@media (max-width: 650px) {
+  .job-creation-choices {
+    grid-template-columns: 1fr;
+  }
+  .job-creation-heading {
+    align-items: flex-start;
+  }
+}

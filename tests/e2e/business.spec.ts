@@ -188,6 +188,7 @@ test("job descriptions and manual application decisions are editable and persist
     .getByRole("button", { name: "Create job post", exact: true })
     .first()
     .click();
+  await page.getByRole("button", { name: /Start from scratch/ }).click();
   await page.getByLabel("Job title", { exact: true }).fill("Product Designer");
   await page.getByLabel("Department", { exact: true }).fill("Design");
   await page.getByLabel("Location", { exact: true }).fill("Singapore");

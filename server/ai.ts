@@ -1,4 +1,5 @@
 /** Server-only OpenAI-compatible text adapter, including RoboApply environment names. */
+import { AiStreamError, readChatStream } from "./ai-stream.js";
 export class AiError extends Error {
   readonly status = 502;
 }
@@ -74,6 +75,7 @@ export function createAi(options: Options = {}) {
         signal?: AbortSignal;
         maxTokens?: number;
         timeoutMs?: number;
+        stream?: boolean;
       } = {},
     ) {
       if (!configured)
@@ -121,6 +123,7 @@ export function createAi(options: Options = {}) {
           ? { max_tokens: tokens }
           : { max_completion_tokens: tokens }),
         ...reasoning,
+        ...(settings.stream ? { stream: true } : {}),
         ...(json ? { response_format: { type: "json_object" } } : {}),
       });
       if (Buffer.byteLength(body) > 1_000_000)
@@ -128,6 +131,9 @@ export function createAi(options: Options = {}) {
           "The AI request exceeded the supported size. Please use less source material.",
         );
       const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const signal = settings.signal
+        ? AbortSignal.any([settings.signal, timeoutSignal])
+        : timeoutSignal;
       const cancellationError = () =>
         settings.signal?.aborted
           ? new AiError("The AI request was cancelled.")
@@ -146,9 +152,7 @@ export function createAi(options: Options = {}) {
             "Content-Type": "application/json",
           },
           body,
-          signal: settings.signal
-            ? AbortSignal.any([settings.signal, timeoutSignal])
-            : timeoutSignal,
+          signal,
         });
       } catch {
         throw (
@@ -164,6 +168,33 @@ export function createAi(options: Options = {}) {
       }
       if (!response.body)
         throw new AiError("The AI provider returned an empty response.");
+      if (
+        response.headers
+          .get("content-type")
+          ?.split(";")[0]
+          .trim()
+          .toLowerCase() === "text/event-stream"
+      ) {
+        try {
+          return await readChatStream(
+            response,
+            signal,
+            () =>
+              cancellationError() ||
+              new AiError("The AI request was cancelled."),
+          );
+        } catch (error) {
+          if (error instanceof AiError) throw error;
+          throw (
+            cancellationError() ||
+            new AiError(
+              error instanceof AiStreamError
+                ? error.message
+                : "The AI provider returned an unreadable stream.",
+            )
+          );
+        }
+      }
       const reader = response.body.getReader(),
         chunks: Uint8Array[] = [];
       let size = 0;
@@ -184,6 +215,17 @@ export function createAi(options: Options = {}) {
         if (result?.choices?.[0]?.finish_reason === "length")
           throw new AiError(
             "The AI answer reached its output limit. Please ask a narrower question.",
+          );
+        const choice = result?.choices?.[0];
+        if (
+          settings.stream &&
+          (result?.error ||
+            choice?.finish_reason !== "stop" ||
+            choice?.message?.refusal ||
+            (choice?.index !== undefined && choice.index !== 0))
+        )
+          throw new AiError(
+            "The AI provider did not return a completed response. Please try again.",
           );
         const text = result?.choices?.[0]?.message?.content;
         if (typeof text !== "string" || !text.trim())

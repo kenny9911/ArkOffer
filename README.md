@@ -31,16 +31,16 @@ SQLite lives in `DATA_DIR/arkoffer.sqlite` and uploaded files in `DATA_DIR/uploa
 - Full-page sequence editor with an AI draft panel, manual steps, timezone schedules, formatted email and copied-recipient approval/suppression.
 - Private AI screening questions and review rubrics, handed to the manual editor before saving or publishing candidate links.
 - Professional candidate enrichment proposals with source provenance, selective field application and protection against concurrent edits.
-- Private AI job-description drafts with editable previews and explicit application to a workspace job; existing status and metadata are preserved.
+- Job creation from original templates, accessible intake conversations and private PDF/DOCX uploads, with editable source-copy or AI drafts and explicit workspace apply; existing status and metadata are preserved.
 - Human-approved job criteria and private application evidence reviews with checked quotations, missing information, follow-up questions and reviewer notes. Hiring decisions remain manual.
-- Private report views with selected conversations, typed AI columns, consent before processing, progress/cancellation, source evidence, annotations and CSV export.
+- Private report views with natural-language definition proposals, selected conversations, typed AI columns, consent before processing, source evidence, annotations, saved grouping/bar charts and CSV exports.
 - Per-section/TLDR note-edit drafts with evidence, preview, apply/discard and history; exact-term replacement can also cover all current notes and an explicitly selected transcript without AI.
 - Slack app OAuth, explicit user linking, permission-aware questions, and personal digest/reminder schedules with draft approval and persistent delivery state.
 - Responsive public pages, pricing controls, local articles, searchable integration directory, and saved demo/newsletter forms.
 
 The drafting/review workflows use the existing shared text-AI provider and workspace allowlist; they add no text-provider environment variables. PDL search uses a separate `SOURCING_WORKSPACE_IDS` allowlist. Drafts and results are private to their author and workspace. Applying a note or job draft changes the workspace record only after explicit review; approved job criteria are shared with the workspace. Evidence reviews and report runs require consent, retain source references, and withhold stale or inaccessible evidence. [Workflow limits and remaining gaps](docs/RECONSTRUCTION.md#reviewed-ai-workflows) distinguish these tools from automated hiring or publishing.
 
-The provider adapters are implemented, but no live calendar, ATS, meeting, mail or payment account is connected by this repository. Tests use local fixtures and mocked provider responses. Voice transcription, professional enrichment and Slack workflows need their own configured accounts. Natural-language automatic report construction, report subscriptions, CV ingestion, AI applicant ranking, ATS rejection/write-back and external job publishing remain unfinished, alongside real-time voice/video agents, autonomous Slack recruiting actions, comprehensive web/market research, SSO/SCIM and synchronized video clips.
+The provider adapters are implemented, but no live calendar, ATS, meeting, mail or payment account is connected by this repository. Tests use local fixtures and mocked provider responses. Voice transcription, professional enrichment and Slack workflows need their own configured accounts. Report subscriptions and advanced meeting-metric filters, CV ingestion, AI applicant ranking, ATS rejection/write-back and external job publishing remain unfinished, alongside real-time voice/video agents, autonomous Slack recruiting actions, comprehensive web/market research, SSO/SCIM and synchronized video clips.
 
 ## Configure services deliberately
 
@@ -73,7 +73,9 @@ npm run format:check
 
 Tests use temporary databases and synthetic accounts. Browser tests start a production build on port 3412; macOS uses the installed Google Chrome when available. CI runs the API suite, build and browser suite on Node.js 24. The delivery PR records final run results; passing mocks do not establish live integration or complete source parity.
 
-A separate isolated synthetic check completed all four new text-AI paths with the configured live model: job draft/apply, note edit/apply/version, application evidence review and queued report extraction/CSV. This bounded check does not establish continuous provider reliability, hiring quality or live operation of the other integrations.
+An earlier isolated synthetic check completed four text-AI paths with the configured live model: job draft/apply, note edit/apply/version, application evidence review and queued report extraction/CSV. This bounded check does not establish continuous provider reliability, hiring quality or live operation of the other integrations.
+
+The [13 October AI and parity update](docs/AI_PARITY_UPDATE.md) records the sequence AI fix, new job/report workflows and current live checks. Sequence generation and report proposals passed; source-backed job AI reached its provider deadline. The manual template/import paths remain available.
 
 ## Production build
 

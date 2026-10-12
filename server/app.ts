@@ -38,6 +38,7 @@ import { registerVoiceScreening } from "./voice-screening.js";
 import { registerEnrichment } from "./enrichment.js";
 import { registerSlack } from "./slack.js";
 import { registerJobDrafts } from "./job-drafts.js";
+import { registerJobSources } from "./job-sources.js";
 import { registerNoteEditing } from "./note-editing.js";
 import { registerApplicationReview } from "./application-review.js";
 import { registerReportViews } from "./report-views.js";
@@ -754,6 +755,7 @@ export function createApp(options: AppOptions = {}) {
     next();
   });
   registerKnowledge(app, store, {}, knowledge);
+  registerJobSources(app, store);
   registerJobDrafts(app, store, { ai });
   registerNoteEditing(app, store, { ai });
   registerApplicationReview(app, store, { ai });

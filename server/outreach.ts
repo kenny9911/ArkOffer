@@ -5,6 +5,7 @@ import { z } from "zod";
 import { sessionUser, hashToken, type User } from "./auth.js";
 import type { Resource, Store } from "./db.js";
 import { renderEmailMarkup, escapeEmailHtml } from "../shared/email-markup.js";
+import { sequenceRequiresSubject } from "../shared/sequence-channels.js";
 import { createMailTransport, MailError, type MailConfig } from "./mail.js";
 import {
   sequenceStepSchema,
@@ -33,8 +34,10 @@ const emailSchema = z.string().trim().toLowerCase().email().max(254);
 const stepSchema = z
   .array(
     sequenceStepSchema.refine(
-      (step) => !!step.subject.trim() && !!step.body.trim(),
-      "Complete each step's subject and body before launching.",
+      (step) =>
+        (!sequenceRequiresSubject(step.kind) || !!step.subject.trim()) &&
+        !!step.body.trim(),
+      "Complete every step's message or instructions, and email/InMail subjects, before launching.",
     ),
   )
   .min(1)
