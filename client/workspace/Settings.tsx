@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import TeamSettings from "./TeamSettings";
+import CalendarSettings from "./CalendarSettings";
+import BillingSettings from "./BillingSettings";
+import AccountSecurity from "./AccountSecurity";
+import ProviderSettings from "./ProviderSettings";
+import "./collaboration.css";
 import {
   ArrowUpRight,
   Check,
@@ -70,6 +76,9 @@ export default function Settings() {
         {[
           ["personal", "Personal", UserRound],
           ["workspace", "Workspace", Building2],
+          ["team", "Team", UserRound],
+          ["security", "Security", Shield],
+          ["billing", "Billing", Building2],
           ["integrations", "Integrations", Plug],
           ["privacy", "Privacy & data", Shield],
         ].map(([id, name, Icon]: any) => (
@@ -87,6 +96,12 @@ export default function Settings() {
         <ErrorBanner error={error} />
         {!data ? (
           <Loading />
+        ) : tab === "team" ? (
+          <TeamSettings />
+        ) : tab === "billing" ? (
+          <BillingSettings />
+        ) : tab === "security" ? (
+          <AccountSecurity />
         ) : tab === "personal" ? (
           <>
             <h1>Personal settings</h1>
@@ -118,63 +133,70 @@ export default function Settings() {
               Set the defaults for your recruiting workspace.
             </p>
             <form key="workspace" onSubmit={save}>
-              <Field label="Workspace name">
-                <input
-                  name="workspaceName"
-                  defaultValue={user?.workspaceName}
-                  required
-                />
-              </Field>
-              <Field label="Default language">
-                <select
-                  name="language"
-                  defaultValue={data.settings?.language || "English"}
-                >
-                  {[
-                    "English",
-                    "Chinese",
-                    "French",
-                    "German",
-                    "Spanish",
-                    "Japanese",
-                    "Portuguese",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Default note format">
-                <select
-                  name="noteFormat"
-                  defaultValue={data.settings?.noteFormat || "Bullets"}
-                >
-                  <option>Bullets</option>
-                  <option>Paragraphs</option>
-                </select>
-              </Field>
-              <Field label="Default note length">
-                <select
-                  name="noteLength"
-                  defaultValue={data.settings?.noteLength || "standard"}
-                >
-                  <option value="concise">Concise</option>
-                  <option value="standard">Standard</option>
-                  <option value="detailed">Detailed</option>
-                </select>
-              </Field>
-              <Field
-                label="Company context"
-                hint="Save context for your team to reference when preparing interviews."
+              <fieldset
+                disabled={
+                  busy || !["owner", "admin"].includes(user?.role || "")
+                }
+                className="settings-fields"
               >
-                <textarea
-                  name="companyContext"
-                  rows={6}
-                  defaultValue={data.settings?.companyContext || ""}
-                />
-              </Field>
-              <Button variant="primary" type="submit" busy={busy}>
-                Save workspace settings
-              </Button>
+                <Field label="Workspace name">
+                  <input
+                    name="workspaceName"
+                    defaultValue={user?.workspaceName}
+                    required
+                  />
+                </Field>
+                <Field label="Default language">
+                  <select
+                    name="language"
+                    defaultValue={data.settings?.language || "English"}
+                  >
+                    {[
+                      "English",
+                      "Chinese",
+                      "French",
+                      "German",
+                      "Spanish",
+                      "Japanese",
+                      "Portuguese",
+                    ].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Default note format">
+                  <select
+                    name="noteFormat"
+                    defaultValue={data.settings?.noteFormat || "Bullets"}
+                  >
+                    <option>Bullets</option>
+                    <option>Paragraphs</option>
+                  </select>
+                </Field>
+                <Field label="Default note length">
+                  <select
+                    name="noteLength"
+                    defaultValue={data.settings?.noteLength || "standard"}
+                  >
+                    <option value="concise">Concise</option>
+                    <option value="standard">Standard</option>
+                    <option value="detailed">Detailed</option>
+                  </select>
+                </Field>
+                <Field
+                  label="Company context"
+                  hint="Save context for your team to reference when preparing interviews."
+                >
+                  <textarea
+                    name="companyContext"
+                    rows={6}
+                    defaultValue={data.settings?.companyContext || ""}
+                  />
+                </Field>
+                <Button variant="primary" type="submit" busy={busy}>
+                  Save workspace settings
+                </Button>
+              </fieldset>
             </form>
           </>
         ) : tab === "integrations" ? (
@@ -183,38 +205,52 @@ export default function Settings() {
             <p className="muted">
               Connect the services that power your recruiting workflow.
             </p>
+            <CalendarSettings />
+            <ProviderSettings />
             <div className="integration-grid">
-              {integrations.map((i: any) => (
-                <article className="integration-card" key={i.id || i.name}>
-                  <div className="integration-icon">
-                    <Plug size={23} />
-                  </div>
-                  <h2>{i.name}</h2>
-                  <span className={`badge ${i.configured ? "green" : ""}`}>
-                    {i.configured ? "Configured" : i.status || "Not configured"}
-                  </span>
-                  <p>
-                    {i.description ||
-                      i.message ||
-                      "Provider setup is required before this integration can be used."}
-                  </p>
-                  {i.configured ? (
-                    <span className="integration-status">
-                      <Check size={15} />
-                      Available to this workspace
+              {integrations
+                .filter(
+                  (i) =>
+                    ![
+                      "google-calendar",
+                      "microsoft-calendar",
+                      "greenhouse",
+                      "meeting-bot",
+                    ].includes(i.id),
+                )
+                .map((i: any) => (
+                  <article className="integration-card" key={i.id || i.name}>
+                    <div className="integration-icon">
+                      <Plug size={23} />
+                    </div>
+                    <h2>{i.name}</h2>
+                    <span className={`badge ${i.configured ? "green" : ""}`}>
+                      {i.configured
+                        ? "Configured"
+                        : i.status || "Not configured"}
                     </span>
-                  ) : (
-                    <details>
-                      <summary>Setup requirements</summary>
-                      <p>
-                        {i.setup ||
-                          i.requirements ||
-                          "This provider needs an application registration, credentials, and an implemented connector. No external account is connected."}
-                      </p>
-                    </details>
-                  )}
-                </article>
-              ))}
+                    <p>
+                      {i.description ||
+                        i.message ||
+                        "Provider setup is required before this integration can be used."}
+                    </p>
+                    {i.configured ? (
+                      <span className="integration-status">
+                        <Check size={15} />
+                        Available to this workspace
+                      </span>
+                    ) : (
+                      <details>
+                        <summary>Setup requirements</summary>
+                        <p>
+                          {i.setup ||
+                            i.requirements ||
+                            "This provider needs an application registration, credentials, and an implemented connector. No external account is connected."}
+                        </p>
+                      </details>
+                    )}
+                  </article>
+                ))}
             </div>
           </>
         ) : (
@@ -226,16 +262,18 @@ export default function Settings() {
             <section className="settings-section">
               <h2>Recording consent</h2>
               <p>
-                Tell participants before recording. ArkOffer only records when
-                you start a recording and grant microphone access.
+                Tell participants before recording. Browser recording requires
+                microphone permission. Meeting capture requires explicit consent
+                before you send or schedule the recording bot.
               </p>
             </section>
             <section className="settings-section">
               <h2>Sharing</h2>
               <p>
-                Conversations are private to the workspace by default. Shared
-                links grant read-only access, expire, and can be revoked from
-                the conversation's Share & export menu.
+                Conversations are visible to their owner and workspace admins by
+                default. Share with named teammates or the workspace from access
+                settings. Shared links grant read-only access, expire, and can
+                be revoked from the conversation's Share & export menu.
               </p>
             </section>
             <section className="settings-section">
@@ -263,9 +301,10 @@ export default function Settings() {
             <section className="settings-section">
               <h2>Workspace administration</h2>
               <p>
-                Enterprise sign-in, automatic retention policies, SCIM, billing,
-                and team invitation delivery require additional services. They
-                are not enabled in this installation.
+                Manage members and invitations in Team settings and sessions in
+                Security. Provider setup is required for email delivery and
+                billing. Enterprise sign-in, automatic retention policies, and
+                SCIM are not implemented.
               </p>
             </section>
           </>

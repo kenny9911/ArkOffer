@@ -70,6 +70,61 @@ export class Store {
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL
       );
     `);
+    // Backfill legacy single-workspace accounts exactly once. Reopening the
+    // database must not restore memberships an administrator has removed.
+    this.transaction(() => {
+      const hasMemberships = this.db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memberships'",
+        )
+        .get();
+      this.db.exec(`
+      CREATE TABLE IF NOT EXISTS memberships (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member')),
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suspended')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS memberships_user ON memberships(user_id, status);
+    `);
+      if (!hasMemberships)
+        this.db
+          .exec(`INSERT INTO memberships (workspace_id, user_id, role, created_at, updated_at)
+        SELECT workspace_id, id, CASE WHEN role IN ('owner', 'admin', 'member') THEN role ELSE 'member' END,
+        created_at, created_at FROM users;`);
+      const sessionColumns = this.db
+        .prepare("PRAGMA table_info(sessions)")
+        .all();
+      if (!sessionColumns.some((column) => column.name === "workspace_id"))
+        this.db
+          .exec(`ALTER TABLE sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
+        UPDATE sessions SET workspace_id = (SELECT workspace_id FROM users WHERE id = sessions.user_id);`);
+      if (!sessionColumns.some((column) => column.name === "public_id"))
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN public_id TEXT;
+          UPDATE sessions SET public_id = lower(hex(randomblob(16)));`);
+      if (!sessionColumns.some((column) => column.name === "user_agent"))
+        this.db.exec(
+          "ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';",
+        );
+      if (!sessionColumns.some((column) => column.name === "last_seen_at"))
+        this.db.exec("ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER;");
+      this.db.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS sessions_public_id ON sessions(public_id);",
+      );
+      const userColumns = this.db.prepare("PRAGMA table_info(users)").all();
+      if (!userColumns.some((column) => column.name === "email_verified_at"))
+        this.db.exec("ALTER TABLE users ADD COLUMN email_verified_at TEXT;");
+      this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS users_initial_membership AFTER INSERT ON users BEGIN
+        INSERT INTO memberships (workspace_id, user_id, role, created_at, updated_at)
+        VALUES (NEW.workspace_id, NEW.id,
+          CASE WHEN NEW.role IN ('owner', 'admin', 'member') THEN NEW.role ELSE 'member' END,
+          NEW.created_at, NEW.created_at);
+      END;
+    `);
+    });
   }
 
   close() {

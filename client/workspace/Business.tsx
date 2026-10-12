@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import "./business.css";
+import SequenceDelivery from "./SequenceDelivery";
 
 type Item = {
   id: string;
@@ -1049,6 +1050,7 @@ function Sequences() {
   const [editing, setEditing] = useState<Item | "new" | null>(null);
   const [enrolling, setEnrolling] = useState<Item | null>(null);
   const [deleting, setDeleting] = useState<Item | null>(null);
+  const [delivery, setDelivery] = useState<string | null>(null);
   const shown = sequences.items.filter((item) =>
     label(item).toLowerCase().includes(query.toLowerCase()),
   );
@@ -1070,8 +1072,10 @@ function Sequences() {
       <div className="business-provider-note">
         <Mail size={17} />
         <span>
-          <strong>Draft workspace</strong> — No mailbox is connected.
-          Enrollments are saved in your workspace; messages are not sent.
+          <strong>Draft workspace</strong> — Drafts and enrollments are saved;
+          messages are not sent. Open Delivery to review recipients and
+          explicitly launch a schedule. Local outbox is the default until a
+          sender is configured.
         </span>
       </div>
       <div className="business-panel">
@@ -1136,6 +1140,9 @@ function Sequences() {
                     <td>{stringList(item.enrolledCandidateIds).length}</td>
                     <td>
                       <div className="business-row-actions">
+                        <Btn secondary onClick={() => setDelivery(item.id)}>
+                          Delivery
+                        </Btn>
                         <Btn secondary onClick={() => setEnrolling(item)}>
                           Enroll candidates
                         </Btn>
@@ -1184,6 +1191,12 @@ function Sequences() {
             await sequences.save({ enrolledCandidateIds: ids }, enrolling.id);
             setEnrolling(null);
           }}
+        />
+      )}
+      {delivery && (
+        <SequenceDelivery
+          sequenceId={delivery}
+          onClose={() => setDelivery(null)}
         />
       )}
       {deleting && (

@@ -2,7 +2,7 @@
 
 The Express server stores workspace data in SQLite at `DATA_DIR/arkoffer.sqlite` and source uploads in `DATA_DIR/uploads`. `DATA_DIR` defaults to `./data`. Run on Node 22.13 or newer. There are no default accounts. Signup creates an independent workspace with 12 editable built-in templates, whether or not demo data is selected. Optional demo conversations and candidates are fictional and use example.com addresses.
 
-Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when frontend and backend origins differ behind a development proxy. All mutating API requests require an allowed `Origin` header. Session authentication uses a seven-day HttpOnly, SameSite=Lax cookie; the database stores only its hash. Production requires HTTPS for the Secure cookie. If an HTTPS reverse proxy terminates TLS, set `TRUST_PROXY=1` only when a trusted proxy is the sole entry point.
+Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when frontend and backend origins differ behind a development proxy. Browser mutations require an allowed `Origin` header. The Stripe raw-body webhook is exempt from browser Origin checks and instead requires a valid Stripe signature; calendar callbacks validate one-use session-bound OAuth state. Session authentication uses a seven-day HttpOnly, SameSite=Lax cookie; the database stores only its hash. Production requires HTTPS for the Secure cookie. If an HTTPS reverse proxy terminates TLS, set `TRUST_PROXY=1` only when a trusted proxy is the sole entry point.
 
 ## Authentication
 
@@ -23,7 +23,7 @@ Set `APP_ORIGIN` to the exact browser origin (or a comma-separated list) when fr
 - `PATCH /:id` with changed fields → `{item}`.
 - `DELETE /:id` → `{ok:true}`.
 
-Conversations and jobs require `title`; the remaining resources require `name`. Applications and screenings also accept a `title`, `candidate`, or `candidateName` in place of a name. Validated custom JSON fields are retained, including template prompts/sections, sequence steps, report filters/columns, and candidate attributes. Server-controlled IDs, timestamps, source-file metadata/storage fields, and provider-processing metadata cannot be overwritten. Records and history are scoped to the authenticated workspace, including nested routes. Entire merged records are limited to 1 MB, including successive edits.
+Conversations and jobs require `title`; the remaining resources require `name`. Applications and screenings also accept a `title`, `candidate`, or `candidateName` in place of a name. Validated custom JSON fields are retained, including template prompts/sections, sequence steps, report filters/columns, and candidate attributes. Server-controlled IDs, timestamps, source-file metadata/storage fields, calendar/ATS/capture provenance, and provider-processing metadata cannot be overwritten. Records and history are scoped to the active session workspace. Conversation and collection routes additionally enforce ownership, workspace visibility and viewer/editor grants; collection permissions apply to their contained conversations. Entire merged records are limited to 1 MB, including successive edits.
 
 Conversation fields: `title`, `candidate`, `interviewer`, `date`, `duration` (minutes), `transcript`, `sections:[{id,title,content}]`, `tldr`, `status` (`ready|processing|upcoming`), `archived`, `collectionIds`, and read-only `shared`. Collection IDs must belong to the workspace. Every edit automatically saves a historical version; the newest 100 versions are retained. Adding a nonempty transcript to a pending upload changes it to ready. Source metadata is `file:{name,mimeType,size}`; storage paths and file IDs are not exposed. `shared` is computed from currently active, unexpired links.
 
@@ -34,7 +34,7 @@ Deleting a collection removes its ID from current conversations while preserving
 - `POST /api/conversations/upload`: multipart `file`, optional `title`, `candidate`, and `transcript` → `{item}` (201). Audio/video uploads support up to 50 MB and remain pending until a transcript is supplied or transcription is requested. Text/VTT auto-imports at up to 800 KB. PDF/DOCX documents extract text locally at up to 10 MB per file; successful extraction returns a ready conversation with `sourceType:"document"`, `transcriptionStatus:"extracted"`, and `extraction:{status:"complete",type:"pdf"|"docx",pages?}`. A supplied transcript takes precedence over automatic extraction.
 - `GET /api/conversations/:id/file`: authorized source-file attachment download.
 - `GET /api/conversations/:id/media`: authorized inline audio/video playback with byte-range support. Other file types are rejected for inline playback.
-- `POST /api/conversations/:id/transcribe`: `{}` → `{item,mode:"openai"}`. Requires `OPENAI_API_KEY`, a supported audio/video upload of at most 25 MB, and a successful provider response. Otherwise returns a clear error without fabricating text.
+- `POST /api/conversations/:id/transcribe`: `{}` → `{item,mode:"openai"}`. Requires `OPENAI_API_KEY` and the current workspace in `OPENAI_WORKSPACE_IDS`, a supported audio/video upload of at most 25 MB, and a successful provider response. Otherwise returns a clear error without fabricating text.
 - `POST /api/conversations/:id/generate`: `{templateId?,format?,length?,language?}` → `{item,mode:"extractive"|"openai",source,preferences}`. `format` is `bullets|paragraphs`; `length` is `concise|standard|detailed`. Supported language values are `original`, `English`, `Chinese`, `French`, `German`, `Spanish`, `Japanese`, `Portuguese`, `Italian`, `Korean`, `Arabic`, `Hindi`, `Dutch`, `Swedish`, `Danish`, `Norwegian`, `Finnish`, `Polish`, `Turkish`, `Indonesian`, `Vietnamese`, and `Thai`. Unknown options are rejected. Per-call options override saved workspace `language`, `noteFormat`, and `noteLength` defaults. With a provider, these choices become explicit model instructions. Without a provider, plain generation preserves the original transcript language and selects 3/8/16 literal excerpts for concise/standard/detailed output, formatted as bullets or paragraphs. Explicit translation and template-based synthesis return 503 without changing existing notes when the provider is absent. Provider requests include up to the first 100,000 transcript characters. `source:{truncated,characters,totalCharacters}` discloses this limit and is persisted as `item.summarySource` alongside `item.summaryMode`. `preferences:{format,length,language,languageBehavior:"original"|"requested_language"}` is also persisted as `item.summaryPreferences`. Concurrent edits during provider requests return 409 instead of being overwritten.
 - `POST /api/conversations/:id/assistant`: `{question}` → `{answer,mode,citations:[{text,start,end}],source}`. Local mode retrieves matching transcript lines; citation offsets refer to the original transcript. OpenAI mode answers against supplied transcript evidence. The same `source` metadata discloses provider clipping; citations only reference text the provider received.
 - `GET /api/conversations/:id/versions` → `{items:[{id,label,createdAt,data}]}`.
@@ -48,16 +48,123 @@ Deleting a collection removes its ID from current conversations while preserving
 ## Settings, export, forms
 
 - `GET /api/settings` → `{user,settings}`.
-- `PATCH /api/settings`: `{name?,workspaceName?,settings?}` → `{user,settings}`.
-- `GET /api/integrations` → `{items}` with actual `configured`, `available`, `status`, and explanatory descriptions. Calendar OAuth, ATS synchronization, live meeting attendance, and outbound emails are not implemented.
-- `GET /api/reports/export?resource=conversations` → workspace-scoped CSV download with formula-injection protection. Any supported resource can be exported.
+- `PATCH /api/settings`: `{name?,workspaceName?,settings?}` → `{user,settings}`. Workspace name/default changes require owner/admin; any user may change their own display name.
+- `GET /api/integrations` → `{items}` with actual `configured`, `available`, `status`, and explanatory descriptions. This directory is supplemented by dedicated provider status endpoints below; configured adapters still require credentials, workspace allowlists and explicit activation.
+- `GET /api/reports/export?resource=conversations` → workspace-scoped, permission-filtered CSV download with formula-injection protection. Any supported resource can be exported.
 - `GET /api/health` → `{ok,storage,services}`.
 - Public `POST /api/demo-requests`: `{name,email,company,companySize?,message?}` → `{ok,message}` (201). Stores the request; does not send email.
 - Public `POST /api/newsletter`: `{email}` → `{ok,message}` (201). Stores interest; does not subscribe to an external mailing service.
 
 ## Provider configuration
 
-Optional server environment: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
+Optional server environment: `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS` (comma-separated workspace UUIDs), `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
+
+## Team and workspace identity
+
+All listed team operations authenticate the current session; browser writes require Origin. Owner/admin management is enforced, with owner-only assignment/modification of admin/owner roles.
+
+- `GET /api/workspaces` → `{items:[{id,name,role,joinedAt}],activeWorkspaceId}`.
+- `POST /api/workspaces`: `{name}` → `{user}` (201); creates a workspace with templates and selects it for this session.
+- `POST /api/workspaces/:id/switch`: `{}` → `{user}`; requires active membership and affects only this session.
+- `GET /api/team/members` → `{items,canManage}`. Regular members see active teammates; admins also see suspended memberships.
+- `PATCH /api/team/members/:id`: `{role?:"owner"|"admin"|"member",status?:"active"|"suspended"}` → `{ok:true}`.
+- `DELETE /api/team/members/:id` → `{ok:true}`; removes membership without deleting the account or its workspace records.
+- `GET /api/team/invitations` → pending `{items}`, without token material.
+- `POST /api/team/invitations`: `{email,name?,role?}` → `{item:{id,email,name,role,createdAt,expiresAt,url}}` (201). The seven-day copy link is returned once; only its token hash is stored. Creating a replacement revokes the prior pending link.
+- `DELETE /api/team/invitations/:id` → `{ok:true}`.
+- Public `GET /api/invitations/:token` → `{invitation:{workspaceName,role,expiresAt,emailHint}}`.
+- Authenticated `POST /api/invitations/:token/accept`: `{}` → `{user}`. Email must match; acceptance is single-use and selects the invited workspace.
+
+A workspace must retain an active owner. Suspension/removal revokes sessions in that workspace and applicable outstanding invitations. Other workspace sessions remain intact. Invitations are capabilities delivered manually; they do not independently establish that an unverified signup owns the claimed mailbox. Limits: 30 memberships per account, 100 pending invitations per workspace.
+
+## Account security
+
+- `GET /api/account/security` → `{email,emailVerifiedAt,mailAvailable,sessions}`. Sessions contain opaque IDs, user-agent descriptions, timestamps, selected workspace and a current-session flag; no cookie hashes.
+- `POST /api/account/password`: `{currentPassword,password}` → `{ok:true,user}`; verifies the old password, rotates this session and revokes all others while preserving the active workspace.
+- `DELETE /api/account/sessions/others` → `{ok:true}`.
+- `DELETE /api/account/sessions/:id` → `{ok:true}`; self-owned sessions only. Revoking the current session clears its cookie.
+- Public `POST /api/auth/forgot-password`: `{email}` → generic `{message}` (202). Eligibility and provider results are not disclosed. Unconfigured live mail returns the same 503 for every address.
+- Public `POST /api/auth/reset-password`: `{token,password}` → `{ok:true,message}`; consumes a 30-minute token and revokes all account sessions.
+- `POST /api/account/verification`: `{}` → `{message}` (202) after provider acceptance, or `{verified:true,message}` when already verified.
+- `POST /api/account/verify-email`: `{token}` → `{ok:true,message}`; requires the matching authenticated account, consumes the 24-hour token and records verification.
+
+Reset/verification tokens are hashed, single-use and never returned by APIs or stored in sequence outboxes. Live Resend configuration and an allowed workspace are required. Passwords use the same 8–128 character constraints and scrypt as signup. Account request rates are bounded. The server drains pending recovery-mail requests before closing SQLite.
+
+## Resource access and comments
+
+For `kind` equal to `conversations` or `collections`:
+
+- `GET /api/:kind/:id/access` → `{ownerId,visibility,permission,canEdit,canManage,grants}`; grant identities are returned only to access managers.
+- `PATCH /api/:kind/:id/access`: `{visibility:"private"|"workspace"}` → `{ok:true}`.
+- `PUT /api/:kind/:id/access/:userId`: `{permission:"viewer"|"editor"}` → `{ok:true}`; recipient must be an active workspace member.
+- `DELETE /api/:kind/:id/access/:userId` → `{ok:true}`.
+
+Workspace admins and resource owners manage access. Collection viewer/editor access grants corresponding access to contained conversations; unrelated private notes remain inaccessible.
+
+- `GET /api/conversations/:id/comments` → `{items}`.
+- `POST /api/conversations/:id/comments`: `{body}` (1–10,000 characters) → `{item}` (201). Read access is sufficient to comment; maximum 500 comments per note.
+- `DELETE /api/conversations/:id/comments/:commentId` → `{ok:true}`; comment author or workspace admin only.
+
+## Workspace assistant
+
+- `GET /api/assistant/threads` → this user's active-workspace `{items}`.
+- `GET /api/assistant/threads/:id` → `{item,messages}`.
+- `DELETE /api/assistant/threads/:id` → `{ok:true}`.
+- `POST /api/assistant/ask`: `{question,threadId?,conversationIds?}` → `{threadId,message}`. Questions are 1–2,000 characters; optional source selection is at most 50 conversation IDs.
+
+Retrieval uses accessible unarchived transcripts and returns at most 12 citations, at most three per conversation, with 900-character excerpts and source offsets. Local mode is labeled extraction; configured, allowed OpenAI may synthesize from that evidence. Threads/history are private to the user/workspace, limited to 100 threads and 100 questions each. Source permissions/text are rechecked after provider calls and on history reads; invalidated answers are withheld. Concurrent questions from one user/workspace are rejected. Provider output is bounded.
+
+## Calendar, ATS and meeting providers
+
+- `GET /api/calendar` → provider configuration/connection status.
+- `POST /api/calendar/:provider/connect`: `{}` → `{url}`, where provider is `google` or `microsoft`.
+- `GET /api/calendar/:provider/callback`: provider OAuth callback; validates state/session and redirects to Settings.
+- `POST /api/calendar/:provider/sync`: `{}` → import results. Primary calendar, upcoming 30 days, at most 1,000 events; explicit action only.
+- `DELETE /api/calendar/:provider` disconnects the current user's current-workspace connection while retaining imported notes.
+- `GET /api/providers` → Greenhouse/Recall configuration and allowlist status.
+- `POST /api/providers/greenhouse/sync`: `{}` → manual bounded read-only import. Owner/admin and configured workspace required.
+- `GET /api/captures` → accessible Recall capture records.
+- `POST /api/captures`: `{title,meetingUrl,joinAt?,consent:true,requestKey}` → capture result. `requestKey` is a UUID reused for safe repetition of the same request.
+- `POST /api/captures/:id/refresh`, `POST /api/captures/:id/leave`, `POST /api/captures/:id/import`: `{}` → updated capture/import result.
+- `DELETE /api/captures/:id` requests cancellation of a supported scheduled capture.
+- `POST /api/captures/:id/recover`: `{botId}` attaches a verified Recall bot to an ambiguous creation only when provider metadata matches the original request.
+
+Provider endpoints and download hosts are constrained, requests are bounded, local edits/import identity are preserved, and credentials are never returned. See [configuration and provider limits](../docs/RECONSTRUCTION.md#provider-configuration). No signed Recall webhook, automatic calendar bot rule or ATS write-back is implemented.
+
+## Outreach delivery
+
+Sequence draft `steps` use `{subject,body,delayDays}` and `enrolledCandidateIds` selects local candidate records.
+
+- `GET /api/sequences/:id/delivery/preview` → personalized recipients, eligibility, delivery mode/configuration and a revision hash.
+- `GET /api/sequences/:id/delivery` → current enrollments, messages, events and configuration.
+- `GET /api/sequences/:id/delivery/messages/:messageId` → authorized message text and delivery state.
+- `POST /api/sequences/:id/delivery/launch`: `{revision,acknowledged:true,mode:"outbox"|"resend"}` → `{ok:true,enrollmentIds,mode}` (201).
+- `POST /api/sequences/:id/delivery/control`: `{action:"pause"|"resume"|"stop"|"replied",enrollmentId?}` → `{ok:true,changed}`.
+- `POST /api/sequences/:id/delivery/reconcile`: `{}` refreshes bounded provider delivery state.
+- Public `GET /api/outreach/unsubscribe/:token` displays a confirmation form; `POST` suppresses the recipient for that workspace and cancels future steps.
+
+Launch/control/status reconciliation require owner/admin. Outbox mode persists messages without delivery. Live mode requires the Resend configuration and workspace allowlist. Approved recipient/content snapshots, delays, idempotency keys and bounded retries persist. Unknown delivery outcomes require attention rather than blind retry. Replies are marked manually, not detected from an inbox. The server worker runs every 15 seconds; limits and setup are in the reconstruction document.
+
+## Billing
+
+- `GET /api/billing` → configuration, test/live mode, management permission, active seats, provider prices, pending checkout and subscription state.
+- `POST /api/billing/checkout`: `{plan,seats,acknowledged:true}` → configured Stripe checkout; owner/admin only. Seats must cover current active membership and are bounded to 1–1,000.
+- `POST /api/billing/checkout/cancel`: `{}` cancels/reconciles a pending checkout.
+- `POST /api/billing/portal`: `{}` → customer-portal URL for the authenticated workspace.
+- `POST /api/billing/refresh`: `{}` refreshes provider subscription state.
+- `POST /api/billing/webhook`: raw JSON body and `Stripe-Signature`. Signature, five-minute freshness, test/live mode, workspace/customer binding and replay/stale-event checks precede updates.
+
+Setup requires allowed workspace IDs, Stripe credentials, recurring price IDs and HTTPS public URL. Browser input cannot select arbitrary provider prices or customers. Subscription tracking does not yet enforce feature/usage entitlements. No live payment is part of the test evidence.
+
+## Published screening
+
+- `POST /api/screenings/:id/publish`: `{}` → a seven-day public questionnaire link with immutable question snapshot.
+- Public `GET /api/interviews/:token` → questionnaire details, without prior candidate responses.
+- Public `POST /api/interviews/:token/responses`: `{candidateName,email,consent:true,answers:[{questionId,value}]}` → persisted response receipt. One response per link; identical retries are idempotent.
+- `GET /api/screenings/:id/responses` → workspace-authorized response/publication review.
+- `DELETE /api/screenings/:id/publications/:publicationId` revokes a link.
+
+Question types are text, yes/no and multiple choice. Submission validates required answers against the published snapshot. No voice agent, invitation email or automated hiring score is produced.
 
 ## Document extraction boundaries
 

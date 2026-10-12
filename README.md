@@ -1,8 +1,8 @@
 # ArkOffer
 
-A runnable recruiting workspace and public website reconstructed from observable Metaview pages, with ArkOffer branding. It includes a React frontend, an Express API, persistent SQLite storage, and isolated user workspaces.
+A recruiting workspace and public website reconstructed from observable Metaview pages, with ArkOffer branding. React, Express and SQLite provide a persistent local application, with configurable adapters for external services.
 
-This is a working reconstruction, **not verified 100% Metaview parity**. REA captured the public website; the signed-in application was inspected through Chrome’s desktop UI. The source service’s private backend and enterprise integrations are unavailable. See [feature coverage and remaining gaps](docs/PARITY.md) and [inspection evidence and architecture](docs/RECONSTRUCTION.md).
+This is **not verified 100% Metaview parity**. REA captured the public website; the signed-in application was inspected through Chrome's desktop UI. The private source backend and enterprise account states were unavailable. See [coverage and gaps](docs/PARITY.md) and [evidence, architecture and provider setup](docs/RECONSTRUCTION.md).
 
 ## Run locally
 
@@ -14,29 +14,36 @@ cp .env.example .env
 npm run dev
 ```
 
-Open [http://localhost:5174](http://localhost:5174). The API runs on port 3002. These ports avoid the existing GoApply development services on this machine. Register a new account; optional demo content is clearly synthetic. No Metaview credentials or private account records are included.
+Open [http://localhost:5174](http://localhost:5174). The API runs on port 3002, avoiding the existing GoApply services on this machine. Register an independent ArkOffer account; optional example data is fictional. Metaview credentials and private account records are not included.
 
-SQLite and uploaded files are stored in `./data` by default, outside Git. Restarting the app preserves them. Set `DATA_DIR` to a durable directory for a persistent installation. Back up the database and uploaded files together while the app is stopped.
+SQLite lives in `DATA_DIR/arkoffer.sqlite` and uploaded files in `DATA_DIR/uploads` (default `./data`). Both are excluded from Git. Back up the database, uploads and separately stored provider encryption key together while the app is stopped. Membership and session migrations preserve existing accounts.
 
-## What works
+## Working features
 
-- Account registration, password login/logout, sessions, workspace isolation, personal and workspace settings.
-- Conversation creation, transcript and document import, browser audio recording, authenticated attachment playback, local transcript extraction, editable notes and TLDR, snippets, search, collections, archive/delete, history and restore, text/print export, expiring read-only share links and revocation.
-- Twelve default note templates plus custom template creation, editing, duplication and deletion.
-- Candidate records, CSV import, local candidate search and saved searches, sequence drafts and enrollment lists, manual application review, job descriptions, screening questionnaires, local reports and CSV exports.
-- Responsive public pages, product navigation, pricing controls, resource articles, integration directory, saved demo requests and newsletter registrations.
+- Accounts, workspace membership and switching, owner/admin/member roles, expiring invitations, suspension/removal, password changes, session management, and provider-backed password recovery/email verification.
+- Notes from transcripts, text/PDF/DOCX uploads and browser recordings; editing, snippets, templates, extraction, provider-backed summaries/transcription/translation, history, archive, export and expiring public links.
+- Conversation ownership, viewer/editor grants, workspace visibility and comments, enforced across API reads, files, history and exports. Workspace assistant threads retrieve cited excerpts across accessible notes and persist their history.
+- Candidate records and CSV import, local sourcing/search, manual application decisions, jobs, text/choice screening links with saved responses, local reports and CSV exports.
+- Sequence previews and explicit enrollment approval, persistent scheduled delivery, pause/resume/cancel, unsubscribe suppression and provider status. Default **outbox mode does not send email**.
+- Configurable Google/Microsoft calendar import, Greenhouse Harvest v3 import, Recall meeting capture, and Stripe subscription checkout/customer portal.
+- Responsive public pages, pricing controls, local articles, searchable integration directory, and saved demo/newsletter forms.
 
-Model-generated summaries, template-based notes, translation, transcript Q&A and audio transcription use OpenAI when configured on the server. Without a key, basic notes and Q&A use clearly labeled transcript extraction; translation and template generation report the missing provider and preserve existing notes.
+The provider adapters are implemented, but no live calendar, ATS, meeting, mail or payment account is connected by this repository. Tests use local fixtures and mocked provider responses. Voice AI screening, public candidate enrichment, Slack automation, SSO/SCIM, synchronized video clips, full ATS write-back and several source-specific workflows remain unfinished.
 
-```dotenv
-OPENAI_API_KEY=your-server-side-key
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
-```
+## Configure services deliberately
 
-A configured model provider receives the transcript only when a user invokes the relevant action. API requests are bounded; provider errors leave existing notes intact. The UI identifies truncated source input. Keep provider keys in `.env` or the host’s secret store, never in client code or commits.
+The complete variable template is [.env.example](.env.example). Keep credentials on the server. Workspace allowlists contain comma-separated workspace UUIDs returned by authenticated `GET /api/workspaces`; an empty list enables no workspace for that operator-funded service. A signup cannot automatically spend shared provider credits.
 
-Calendar sync, meeting bots, ATS/CRM sync, candidate enrichment, automated email delivery, voice screening, billing, SSO and Slack are **not connected**. Sequence enrollment does not send email; scheduling creates a local entry. See the parity document for precise limits, including team collaboration and source features that were not observable.
+| Service                   | Required setup                                                                                                                     | Actual behavior                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI                    | `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS`; optional model variables                                                                 | Explicit summary, template, translation, transcription and assistant actions. Local excerpt mode remains available without provider access. |
+| Google/Microsoft calendar | App client ID/secret, `CALENDAR_TOKEN_ENCRYPTION_KEY`, exact `CALENDAR_APP_ORIGIN` in `APP_ORIGIN`, provider callback registration | Per-user/workspace OAuth, explicit primary-calendar sync for the next 30 days. No automatic meeting-bot rule.                               |
+| Greenhouse                | `GREENHOUSE_CLIENT_ID`, `GREENHOUSE_CLIENT_SECRET`, `PROVIDER_WORKSPACE_IDS`; optional `GREENHOUSE_USER_ID`                        | Manual read-only Harvest v3 import of nonprivate candidates, nonconfidential jobs and associated applications.                              |
+| Recall                    | `RECALL_API_KEY`, `RECALL_REGION`, `PROVIDER_WORKSPACE_IDS`                                                                        | Explicit consent, bot request, manual status refresh/leave/cancel and ready transcript import.                                              |
+| Resend                    | `MAIL_MODE=resend`, `RESEND_API_KEY`, `MAIL_FROM`, HTTPS `PUBLIC_APP_URL`, `MAIL_WORKSPACE_IDS`                                    | Approved sequence email delivery. Password recovery and verification require live mail; tokens never enter the local outbox.                |
+| Stripe                    | Secret key, webhook signing secret, configured recurring price IDs, HTTPS `PUBLIC_APP_URL`, `BILLING_WORKSPACE_IDS`                | Owner/admin checkout, customer portal and signed webhook subscription updates. Test keys first; pricing-page amounts are illustrative.      |
+
+See [detailed setup and limits](docs/RECONSTRUCTION.md#provider-configuration). Changing `.env` requires restarting the server. Calendar tokens are encrypted at rest; losing or replacing their encryption key requires reconnecting calendars. No production deployment or paid-provider configuration is performed automatically.
 
 ## Validate
 
@@ -48,7 +55,7 @@ npm run test:e2e
 npm run format:check
 ```
 
-API tests use isolated temporary databases. Browser tests start a separate production build on port 3412 with synthetic accounts and a temporary data directory; macOS uses the installed Google Chrome when available. Provider behavior is tested with mocked responses, not live paid requests. CI runs the API suite, build and browser suite on Node.js 24.
+Tests use temporary databases and synthetic accounts. Browser tests start a production build on port 3412; macOS uses the installed Google Chrome when available. CI runs the API suite, build and browser suite on Node.js 24. The delivery PR records final run results; passing mocks do not establish live integration or complete source parity.
 
 ## Production build
 
@@ -57,17 +64,16 @@ npm run build
 npm start
 ```
 
-Express serves the built frontend and API on port 3002. `npm start` enables secure session cookies: put the app behind HTTPS and set `APP_ORIGIN` to the exact public origin. The server binds to `127.0.0.1` by default; configure `HOST` if required. All `/api` routes remain same-origin in the browser. Local HTTP preview should use `npm run dev`, not production mode.
+Express serves frontend and API on port 3002. Production cookies require HTTPS. Set `APP_ORIGIN` to the exact public origin and, for enabled services, `PUBLIC_APP_URL` and `CALENDAR_APP_ORIGIN`. The default bind address is `127.0.0.1`; only set `TRUST_PROXY=1` for a trusted single-hop proxy with no direct bypass. Local HTTP development should use `npm run dev`.
 
-This repository uses single-process SQLite and local file storage. It has no production deployment, operational monitoring, external mail transport or managed backups configured. Before exposing it publicly, provision HTTPS, durable storage, account recovery/email verification, abuse protection and provider credentials appropriate to the intended use. Do not use the draft legal pages as a production privacy policy.
+This is a single-process SQLite/local-file deployment. The sequence worker runs with the server and resumes stored pending work after restart; it cannot deliver while the process is stopped. Shutdown drains pending outreach and account-mail work before closing storage. Provision durable storage, backups, monitoring, abuse controls and a production deployment before public use. The included legal pages are drafts.
 
 ## Project layout
 
 - `client/marketing/`: public pages and interactions.
-- `client/workspace/`: recruiting workspace and public shared views.
-- `server/`: API, authentication, storage, providers and document extraction.
-- `tests/server/`, `tests/e2e/`: API and complete browser workflows.
-- `public/marketing/origins.json`: public reference asset provenance.
-- [API reference](server/API.md): endpoint contracts and limits.
+- `client/workspace/`: recruiting workspace, account and integration screens.
+- `server/`: API, permissions, persistence, providers and document extraction.
+- `tests/server/`, `tests/e2e/`: API boundaries and browser-to-storage workflows.
+- [API reference](server/API.md), [parity matrix](docs/PARITY.md), [public asset provenance](public/marketing/origins.json).
 
-Captured private browser data, runtime uploads, cookies, provider keys and generated databases are excluded from the repository. Public reference asset provenance is recorded; independently written application logic replaces the inaccessible source backend.
+Captured account data, cookies, provider credentials, runtime uploads and databases do not belong in commits.

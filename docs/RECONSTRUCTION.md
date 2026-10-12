@@ -1,6 +1,6 @@
 # ArkOffer reconstruction: evidence and scope
 
-ArkOffer is a working local full-stack reconstruction of the observed Metaview website and selected recruiting workflows. It is **not a 100% functional clone of Metaview**. It has its own React frontend, Express API, SQLite storage, authentication, and optional AI provider. Metaview's private source code, backend services, production datasets, and integration credentials were not obtained.
+ArkOffer is a working local full-stack reconstruction of the observed Metaview website and selected recruiting workflows. It is **not a 100% functional clone of Metaview**. It has its own React frontend, Express API, SQLite storage, authentication, and optional external-provider adapters. Metaview's private source code, backend services, production datasets, and integration credentials were not obtained.
 
 This record describes the implementation reviewed on **12 October 2026**. [PARITY.md](PARITY.md) maps source products and routes to local behavior and remaining gaps. [The API reference](../server/API.md) documents the actual request contracts and limits.
 
@@ -19,47 +19,81 @@ Raw browser captures and private account observations remain outside the reposit
 
 ## What runs locally
 
-The browser uses React, TypeScript, React Router, and Vite. Public pages live in `client/marketing`; authenticated screens live in `client/workspace`. The Express API in `server/app.ts` serves authenticated workspace resources and public form submissions. SQLite persists records in `DATA_DIR/arkoffer.sqlite`; uploaded sources are stored under `DATA_DIR/uploads`.
+React, TypeScript, React Router and Vite serve public and signed-in screens. Express serves authenticated workspace APIs and selected public-token/form routes. SQLite persists `DATA_DIR/arkoffer.sqlite`; source files live under `DATA_DIR/uploads`. The application does not forward requests to Metaview or reuse its authenticated endpoints, tracking scripts or cookies.
 
-Signup creates an independent workspace with 12 editable built-in templates. Optional example conversations and candidates are fictional. Login uses a password and a seven-day HttpOnly session cookie; only a session-token hash is stored. Resource lookups, historical versions, source downloads, and exports are scoped to the authenticated workspace. Mutating requests require an allowed origin. These are implemented protections, not an assertion of enterprise certification or a completed production security audit.
+Signup creates a personal workspace with 12 editable built-in templates and optional fictional examples. Users can create or join more workspaces. Additive migrations preserve legacy accounts and populate memberships once; removed memberships are not recreated at restart. A session selects one active workspace independently of sessions on other browsers.
 
-The main usable flows are:
+Passwords use salted scrypt. Seven-day session cookies are HttpOnly, SameSite=Lax and Secure in production; only token hashes are stored. Public session-management IDs do not expose the cookie token. Mutations require an allowed Origin except provider webhooks with their own signature verification. Workspace settings and management operations enforce roles.
 
-- Create an account; log in and out; update the user's name and workspace settings.
-- Paste a transcript, upload a source, or record audio through browser microphone permission. An upcoming entry can be created manually.
-- Generate clearly labeled local transcript highlights, edit sections and TLDR, save text snippets, maintain collections, archive records, and restore note versions.
-- Ask questions against a transcript, inspect source excerpts, copy/export notes, and create or revoke an expiring read-only share link.
-- Create and import candidates, save searches over the local candidate library, record manual decisions, draft sequences and enrollment, maintain job descriptions and applications, and build screening drafts with a nonpersistent candidate preview. Published screenings use separate expiring links that accept persistent text/choice responses; they do not send invitations automatically.
-- View charts calculated from local records, save report filters, and export CSV.
-- Submit a demo request or newsletter interest to local persistent storage.
+Notes have an owner, private/workspace visibility and optional viewer/editor grants to active teammates. Owners and administrators can read workspace notes. Member access is limited to owned, explicitly shared or workspace-visible conversations, including permissions inherited from shared collections. Permission checks cover lists, direct reads, edits, uploads/downloads, versions, public-link management, comments, assistant sources and exports. Comments are persistent; this is not real-time multi-cursor editing.
 
-These flows use the reconstruction's API. They do not forward requests to Metaview or reuse its tracking scripts, authenticated endpoints, or account cookies.
+The product also supports local candidate/job/application records, CSV imports, manual recruiting decisions, templates, text/choice screening questionnaires, persistent published responses, reports, public intake forms and the public marketing pages described in the parity matrix. New team invitations are seven-day copy links, stored as hashes and accepted once by a matching signed-in email. Possession of a copied invite is a capability; an unverified signup email is not independent proof of mailbox ownership. Invitation emails are not automatically sent.
 
-## AI and files
+## AI, retrieval and files
 
-Without `OPENAI_API_KEY`, note generation extracts transcript highlights and the assistant retrieves matching transcript lines. The UI/API identify that mode as extraction. It does not impersonate model reasoning, evaluate candidate suitability, or fabricate transcription. Format and length preferences affect extraction and model output. Workspace defaults and per-generation overrides are applied. Custom template synthesis and explicit translation require the optional model provider; local extraction preserves the transcript language.
+Without both `OPENAI_API_KEY` and the current workspace ID in `OPENAI_WORKSPACE_IDS`, notes and Q&A use labeled transcript extraction. A supplied server credential alone does not enable every newly registered workspace. Template synthesis, translation and audio transcription require the allowed provider path. Local extraction respects format/length preferences and preserves source language.
 
-With a configured server-side key, explicit actions can request OpenAI note generation, transcript-based answers, or supported recording transcription. The model name is configurable. Generation and question answering send at most the first 100,000 transcript characters; API source metadata discloses clipping. Provider failure leaves prior notes intact. A concurrent edit detected before a provider result is committed returns a conflict instead of overwriting the newer record. Tests simulate model responses; a successful live paid-provider run is not part of the evidence recorded here.
+Explicit allowed actions request summaries, translation, transcription or answers from the configured OpenAI model. Single-conversation generation/Q&A clips source input at 100,000 characters and returns source metadata. Provider errors preserve existing notes; concurrent edits cause a conflict instead of an overwrite. Provider response tests use mocks, not live paid accounts.
 
-Uploads accept supported text, VTT, PDF, DOCX, audio, and video up to 50 MB; document extraction has a stricter 10 MB input limit. Text and extracted document content are capped at 800 KB. Text-based PDF and DOCX extraction creates a ready conversation with source metadata. PDF extraction is limited to 200 pages; DOCX processing limits expanded data to 20 MB, each XML part to 4 MB, and archive entries to 1,000. Extraction runs in bounded workers with a ten-second deadline and at most two concurrent jobs. Scanned PDFs need OCR, which is absent. Corrupt, empty, unsupported encrypted, or oversized documents produce explicit errors and failed uploads are removed without creating a note. Optional recording transcription has a separate 25 MB provider limit. Uploaded audio/video has authorized byte-range playback, but no synchronized word timing, automatic speaker correction, or extracted video clips.
+The workspace assistant at `/app/fillmore` keeps per-user, per-workspace threads and citations across accessible, unarchived notes. Local retrieval ranks matching transcript excerpts, taking at most three per conversation and 12 overall, with each excerpt capped at 900 characters. Retrieval streams up to 50 MB of the newest conversation records (at most 2,000 records), matches up to 20 question terms and explains when the scan limit is reached. Selecting a source narrows the search. Optional synthesis receives those excerpts; saved generated answers are capped at 20,000 characters. It does not browse the web, run autonomous actions or decide hiring outcomes. Threads are limited to 100 per user/workspace and 100 questions each. Answers whose cited source text changes or becomes inaccessible are withheld on subsequent reads. This differs from the single-note question panel, whose UI chat state is not persistent.
 
-Published screening links use an immutable question snapshot and a random bearer token; only its hash is stored. Each seven-day link accepts one candidate response with name, email, consent, and validated answers. An identical retry is idempotent; a changed repeat is rejected. Workspace-authorized users can review responses, and owners can revoke links. Public reads do not expose submitted identity or answers. A draft preview remains nonpersistent.
+Uploads accept supported text, VTT, PDF, DOCX, audio and video up to 50 MB; document extraction has a 10 MB input limit. Text/extracted content is capped at 800 KB. PDF extraction supports text-based PDFs up to 200 pages; DOCX bounds expanded data at 20 MB, XML parts at 4 MB and entries at 1,000. Extraction uses workers with a ten-second deadline and at most two concurrent jobs. There is no OCR. Corrupt, empty, encrypted/unsupported or oversized documents return explicit errors and failed uploads do not create notes. Optional audio transcription has a separate 25 MB provider limit. Uploaded media supports authorized byte-range playback, but not synchronized word timing or video clipping.
 
-## External services and remaining work
+Published screening links use immutable question snapshots and hashed random tokens. Each seven-day link accepts one validated candidate response; an identical retry is idempotent. Authorized users can review responses; publication management is role-restricted. Public reads do not expose submitted identities or answers. Voice agents, video interviews and automated evaluation are absent.
 
-| Dependency                        | Present implementation                                                                              | Work still required for the source workflow                                                                                                                                 |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AI notes and transcription        | Optional server-side OpenAI requests, local extraction fallback, explicit errors and source limits. | Configure a key/model and validate real recordings and model quality. Other provider support and source-product equivalence are unverified.                                 |
-| Calendar and live meeting capture | Manual upcoming records and browser microphone recording.                                           | Google/Microsoft OAuth, calendar sync, invitations, conferencing bot infrastructure, consent and retention workflows.                                                       |
-| ATS and candidate providers       | Local candidate, application, and job records; CSV import/export.                                   | Provider contracts, OAuth, webhooks, field/stage mapping, deduplication, remote updates, external search and contact enrichment.                                            |
-| Outreach and notifications        | Draft sequences, saved enrollment, locally stored demo/newsletter submissions.                      | Mailbox authorization, actual sending, scheduling, unsubscribe/bounce handling, replies, analytics, email notifications and mailing-list delivery.                          |
-| Screening execution               | Saved question plans, preview, and published text/choice sessions with persistent responses.        | Invitation delivery, voice/video sessions, automated evaluation, configurable deadlines/reminders, and ATS stage automation. Published links have a fixed seven-day expiry. |
-| fillmore / Slack coworker         | Honest unavailable state and setup requirements.                                                    | Slack app/OAuth, permission-aware retrieval, autonomous tasks, approvals, external communications, scheduling and monitoring.                                               |
-| Team and enterprise identity      | Independent workspaces with local session authentication.                                           | Membership and invitation flow, role permissions, shared-with-me collaboration, SAML/OIDC, SCIM, seat management and organization administration.                           |
-| Commercial operation              | Illustrative pricing controls and demo intake.                                                      | Checkout, subscriptions, invoices, entitlements, credits, usage metering and payment webhooks. No purchase occurs on pricing pages.                                         |
-| Production operation              | Local persistence, scoped APIs, validation, CI configuration.                                       | Choose and validate deployment, backups, recovery, operational monitoring, scalability, applicable retention controls, and production legal policies.                       |
+## Provider configuration
 
-Adding a credential does not enable an unimplemented connector. The integration screens deliberately distinguish configuration from available functionality.
+Start from [.env.example](../.env.example), supply credentials in a private server environment, and restart. Do not commit credentials, tokens or real workspace IDs. Authenticated `GET /api/workspaces` returns the user's workspace IDs. `OPENAI_WORKSPACE_IDS`, `PROVIDER_WORKSPACE_IDS`, `MAIL_WORKSPACE_IDS` and `BILLING_WORKSPACE_IDS` are separate comma-separated allowlists; blanks enable no workspace for their funded services. Provider operations that manage external state also require their application roles and explicit UI action.
+
+### Calendar OAuth
+
+Set `CALENDAR_TOKEN_ENCRYPTION_KEY` to a securely generated, stable 64-character hexadecimal secret, for example by generating one with `openssl rand -hex 32`. Back it up separately. Set `CALENDAR_APP_ORIGIN` to an exact origin in `APP_ORIGIN`; production requires HTTPS, while localhost HTTP is accepted for development.
+
+For Google, configure `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` with the exact callback `<origin>/api/calendar/google/callback`. For Microsoft, configure `MICROSOFT_CALENDAR_CLIENT_ID` and `MICROSOFT_CALENDAR_CLIENT_SECRET` with `<origin>/api/calendar/microsoft/callback`. Each user connects through Settings and provider consent. OAuth state is expiring, session-bound and single-use; PKCE is used. Tokens are encrypted with AES-256-GCM and bound to the user, workspace and provider.
+
+Sync is explicit, for the connected primary calendar and next 30 days, capped at 1,000 events. Imports are duplicate-safe, preserve local note edits and archive observed cancelled events. Disconnect removes local credentials while retaining imported notes. There is no background webhook/delta sync, shared-calendar picker, calendar write-back or automatic meeting-bot attendance rule.
+
+References: [Google web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Google events.list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [Microsoft authorization code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), [Microsoft calendarView](https://learn.microsoft.com/en-us/graph/api/calendar-list-calendarview?view=graph-rest-1.0).
+
+### Greenhouse Harvest v3
+
+Set `GREENHOUSE_CLIENT_ID`, `GREENHOUSE_CLIENT_SECRET` and `PROVIDER_WORKSPACE_IDS`. `GREENHOUSE_USER_ID` optionally supplies a numeric provider user scope. A workspace owner/admin can run a manual import from Settings.
+
+The adapter uses client credentials and fixed Harvest v3 endpoints. It imports nonprivate candidates, nonconfidential jobs and associated applications; it preserves local edits while updating separate provider metadata. Responses are bounded, with at most ten pages and 1,000 records per resource. Exceeding those bounds fails the import rather than silently importing a partial catalog. There is no continuous synchronization, attachments/CV import, scorecard write-back or remote stage mutation.
+
+References: [Authentication](https://harvestdocs.greenhouse.io/docs/authentication), [pagination](https://harvestdocs.greenhouse.io/docs/pagination), [candidates](https://harvestdocs.greenhouse.io/reference/get_v3-candidates), [jobs](https://harvestdocs.greenhouse.io/reference/get_v3-jobs), [applications](https://harvestdocs.greenhouse.io/reference/get_v3-applications).
+
+### Recall meeting capture
+
+Set `RECALL_API_KEY`, `PROVIDER_WORKSPACE_IDS`, and `RECALL_REGION` to one of `us-east-1`, `us-west-2`, `eu-central-1` or `ap-northeast-1`. The UI requires a supported meeting URL and explicit recording-consent acknowledgment before requesting a bot. Scheduled joins must be between ten minutes and 30 days ahead.
+
+Users explicitly refresh status, leave a call, cancel supported scheduled capture or import a ready transcript. Creation request identities prevent accidental duplicate local requests; ambiguous provider outcomes require recovery rather than blind automatic retries. Imported notes are private to their creator subject to workspace administration. Transcript imports are bounded to 20,000 provider segments, an 8 MB response and 500,000 characters. The adapter does not import a local media recording, receive signed status webhooks, automatically follow calendars or reproduce the source meeting infrastructure.
+
+References: [Create bot](https://docs.recall.ai/reference/bot_create), [retrieve bot](https://docs.recall.ai/reference/bot_retrieve), [leave call](https://docs.recall.ai/reference/bot_leave_call_create), [delete bot](https://docs.recall.ai/reference/bot_destroy), [transcription](https://docs.recall.ai/docs/recallai-transcription), [download schemas](https://docs.recall.ai/docs/download-schemas), [regions](https://docs.recall.ai/docs/regions).
+
+### Resend and account mail
+
+Default `MAIL_MODE=outbox` saves sequence messages locally and makes no mail-provider call. Live sending requires `MAIL_MODE=resend`, `RESEND_API_KEY`, a verified `MAIL_FROM`, HTTPS `PUBLIC_APP_URL` and `MAIL_WORKSPACE_IDS`; `MAIL_REPLY_TO` is optional.
+
+A sequence owner/admin previews personalized recipients and approves a revision before activation. Persistent messages retain the approved snapshot, delays and per-message idempotency keys. Pause/resume/cancel, manual reply status, unsubscribe links and workspace suppression lists are implemented. The server worker handles bounded retries for explicit transient failures, polls known provider statuses and stops on unknown delivery outcomes. It runs only while the server is running; this is not mailbox OAuth, automatic inbound-reply detection or a delivery guarantee. Limits include ten steps, 100 recipients per activation and 1,000 active/paused enrollments per workspace.
+
+Account password changes work without mail and require the current password. They rotate this session and revoke others. Reset links require live mail, expire after 30 minutes, are hashed and single-use, and invalidate all sessions when consumed. Verification links require a matching signed-in account and expire after 24 hours. Account tokens never enter sequence outboxes or API responses. Forgot-password responses are generic and acknowledged before mail-provider I/O; shutdown drains pending requests. A process crash can interrupt delivery, so the receipt does not assert successful delivery.
+
+References: [Send email](https://resend.com/docs/api-reference/emails/send-email), [idempotency keys](https://resend.com/docs/dashboard/emails/idempotency-keys).
+
+### Stripe billing
+
+Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, at least one recurring seat price (`STRIPE_PRICE_TEAM` / `STRIPE_PRICE_BUSINESS`), HTTPS `PUBLIC_APP_URL` and `BILLING_WORKSPACE_IDS`. Use Stripe test mode first. Settings displays configured provider prices and test/live mode; an owner/admin chooses a plan and seat quantity before redirecting to Checkout.
+
+Register the snapshot webhook endpoint `<PUBLIC_APP_URL>/api/billing/webhook` for subscription created/updated/deleted and checkout completion events. Raw request bodies are verified against the signing secret with a five-minute timestamp tolerance. Stored customer/workspace bindings, replay checks and stale-event handling protect updates; refresh reconciles provider status. Customer-portal access and checkout cancellation/recovery are available.
+
+This tracks commercial state; it does not yet enforce subscription features, source-product usage credits, metering or paid-seat quotas on invitations. Public pricing-page figures remain illustrative. No real charge or live subscription was created during repository validation. Reference: [Stripe webhook signature verification](https://docs.stripe.com/webhooks#verify-manually).
+
+## Remaining implementation and operational work
+
+The working adapters do not establish complete source parity. Missing features include external candidate discovery/contact enrichment; Gmail/Outlook inbox integration and automatic reply detection; voice/video screening agents; ATS write-back and providers beyond Greenhouse; real-time coediting and video snippets; full report/AI-column automation; Slack coworker actions and scheduling; enterprise SSO/MFA/SCIM, managed domains and retention policies; and enforced usage/credit entitlements.
+
+No production deployment, operational monitoring, load test or live paid-provider end-to-end validation is included. This is a single-process SQLite/local-files installation. Backups, encryption-key handling, HTTPS, abuse controls, recovery operations and legal policies need an operating environment and operator decisions. Configuration alone does not establish a successful external connection.
 
 ## Public content and asset provenance
 
@@ -69,21 +103,20 @@ The hero image and fonts downloaded from observed public asset URLs are recorded
 
 ## Validation evidence and boundaries
 
-The repository provides three reproducible checks:
+Reproduce the repository checks with:
 
 ```sh
 npm test
 npm run build
 npm run test:e2e
+npm run format:check
 ```
 
-Final local verification passed **29 API tests and 11 browser tests**, the production build, and formatting checks. The API total includes 21 core checks and eight published-screening checks. The core suite also passed on Node 22.23.3 and 24.21.0, with the combined backend suite passing on Node 26.8.1. `npm audit --omit=dev` reported no known production dependency vulnerabilities at review time; this is not a complete security audit.
+The API suites in [tests/server](../tests/server) exercise authentication, migrations, memberships/roles, conversation permissions, sharing, source files, versioning, document limits, screening responses, account security, provider request boundaries and error handling. Calendar, mail, ATS, meeting, billing and AI tests use injected responses. Browser suites in [tests/e2e](../tests/e2e) cover local browser-to-API persistence, cross-session account changes, invitations/workspace switching and recruiting flows.
 
-The API suites in [api.test.ts](../tests/server/api.test.ts) and [screening.test.ts](../tests/server/screening.test.ts) cover workspace isolation, cookie lifecycle, origin validation, resource persistence, upload authorization and cleanup, history restore, expiring/revoked shares, extraction citations, CSV safety, public form persistence/rate limits, record limits, document extraction boundaries, screening consent/response validation, and simulated provider behavior and concurrent-edit preservation. The browser suites in [workspace.spec.ts](../tests/e2e/workspace.spec.ts) and [business.spec.ts](../tests/e2e/business.spec.ts) exercise real local browser-to-API persistence, including anonymous screening submission, private response review, settings-tab isolation, delayed template saves, and generation-failure preservation. A simulated late microphone-permission test verifies that closing the dialog stops the eventual stream; it does not establish successful physical microphone capture. Their checks do not call the original service.
+Final combined-suite counts and remote checks belong in the delivery PR after execution. Earlier marketing review covered 19 public routes, desktop/390-pixel layouts, navigation, local forms, search and pricing controls. The microphone regression simulates a late permission result; it does not establish physical recording. Screenshots support layout review, not pixel equality of every source state.
 
-Independent marketing checks exercised 19 public routes, desktop and 390-pixel layouts, navigation, resource search/category filtering, pricing controls, and successful local demo/newsletter submissions. No JavaScript errors or horizontal overflow were observed in those checked pages. Screenshots support layout review; they are not pixel-difference proof of the whole source site.
-
-The GitHub workflow installs dependencies, runs API tests, builds, and runs Chromium browser tests. A workflow file alone is not a passing remote run. Delivery status and the final executed check results belong in the associated pull request. Untested external integrations, real provider calls, load behavior, accessibility conformance, and exhaustive source-site parity must not be inferred from these targeted checks.
+The GitHub workflow runs API tests, production build and Chromium tests. A workflow file is not itself a successful check. Tests do not establish live provider accounts, original-service behavior, production capacity, accessibility conformance, hiring quality or 100% source equivalence.
 
 ## Public reference index
 

@@ -44,12 +44,16 @@ import {
   SearchBox,
   Avatar,
   useToast,
+  useAuth,
   niceDate,
   downloadText,
   type Item,
 } from "../ui";
+import { AccessPanel, ConversationComments } from "./Collaboration";
+
 type Section = { id: string; title: string; content: string };
 export default function Notes() {
+  const { user } = useAuth();
   const location = useLocation(),
     navigate = useNavigate();
   const { items, loading, error, refresh } = useItems("conversations"),
@@ -58,6 +62,7 @@ export default function Notes() {
     [archived, setArchived] = useState(false),
     [upload, setUpload] = useState(false),
     [newCollection, setNewCollection] = useState(false),
+    [managingCollection, setManagingCollection] = useState<Item | null>(null),
     [setup, setSetup] = useState(true),
     [selection, setSelection] = useState<string[]>([]);
   const toast = useToast();
@@ -73,7 +78,7 @@ export default function Notes() {
       (filter === "upcoming"
         ? n.status === "upcoming"
         : filter === "shared"
-          ? n.shared
+          ? n.shared || (n.access?.ownerId && n.access.ownerId !== user?.id)
           : filter === "collection"
             ? (n.collectionIds || []).includes(collectionId)
             : n.status !== "upcoming") &&
@@ -151,38 +156,54 @@ export default function Notes() {
               </button>
             </div>
             {collections.items.length ? (
-              collections.items.map((c) => (
-                <div className="collection-row" key={c.id}>
-                  <Link
-                    className={collectionId === c.id ? "selected" : ""}
-                    to={`/notes/collection/${c.id}`}
-                  >
-                    <Folder size={17} />
-                    {c.name || c.title}
-                  </Link>
-                  <button
-                    className="icon-btn"
-                    aria-label={`Delete collection ${c.name}`}
-                    onClick={async () => {
-                      if (
-                        !confirm(
-                          "Delete this collection? Conversations will be kept.",
+              [...collections.items]
+                .sort(
+                  (a, b) =>
+                    Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)),
+                )
+                .map((c) => (
+                  <div className="collection-row" key={c.id}>
+                    <Link
+                      className={collectionId === c.id ? "selected" : ""}
+                      to={`/notes/collection/${c.id}`}
+                    >
+                      <Folder size={17} />
+                      {c.pinned ? "★ " : ""}
+                      {c.name || c.title}
+                    </Link>
+                    <button
+                      className="icon-btn"
+                      aria-label={`Manage collection ${c.name}`}
+                      onClick={() => setManagingCollection(c)}
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      aria-label={`Delete collection ${c.name}`}
+                      disabled={c.access?.canManage === false}
+                      onClick={async () => {
+                        if (
+                          !confirm(
+                            "Delete this collection? Conversations will be kept.",
+                          )
                         )
-                      )
-                        return;
-                      try {
-                        await api(`collections/${c.id}`, { method: "DELETE" });
-                        await collections.refresh();
-                        navigate("/notes");
-                      } catch (e) {
-                        toast((e as Error).message);
-                      }
-                    }}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))
+                          return;
+                        try {
+                          await api(`collections/${c.id}`, {
+                            method: "DELETE",
+                          });
+                          await collections.refresh();
+                          navigate("/notes");
+                        } catch (e) {
+                          toast((e as Error).message);
+                        }
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))
             ) : (
               <div className="empty-collections">
                 <Layers size={26} />
@@ -330,6 +351,62 @@ export default function Notes() {
             />
           )}
         </div>
+      )}
+      {managingCollection && (
+        <Modal
+          title="Collection settings"
+          onClose={() => setManagingCollection(null)}
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const form = new FormData(e.currentTarget);
+              try {
+                await api(
+                  `collections/${managingCollection.id}`,
+                  json("PATCH", {
+                    name: form.get("name"),
+                    pinned: form.get("pinned") === "on",
+                  }),
+                );
+                await collections.refresh();
+                toast("Collection updated");
+              } catch (error) {
+                toast((error as Error).message);
+              }
+            }}
+          >
+            <Field label="Collection name">
+              <input
+                name="name"
+                defaultValue={managingCollection.name}
+                required
+                maxLength={120}
+                disabled={managingCollection.access?.canEdit === false}
+              />
+            </Field>
+            <label className="switch-label">
+              <input
+                name="pinned"
+                type="checkbox"
+                defaultChecked={managingCollection.pinned}
+                disabled={managingCollection.access?.canEdit === false}
+              />
+              Pin collection
+            </label>
+            <Button
+              type="submit"
+              disabled={managingCollection.access?.canEdit === false}
+            >
+              Save collection
+            </Button>
+          </form>
+          <AccessPanel
+            kind="collections"
+            id={managingCollection.id}
+            onChanged={() => void collections.refresh()}
+          />
+        </Modal>
       )}
       {upload && (
         <UploadModal
@@ -752,7 +829,10 @@ function Conversation({
     Promise.all([api(`conversations/${id}`), api("settings")])
       .then(([r, preferences]) => {
         if (cancelled) return;
-        setNote(r.item);
+        setNote((previous) => ({
+          ...r.item,
+          access: r.item.access || previous?.access,
+        }));
         setFormat(
           r.item.summaryPreferences?.format ||
             (preferences.settings?.noteFormat === "Paragraphs"
@@ -775,6 +855,10 @@ function Conversation({
     };
   }, [id]);
   async function save(patch: Record<string, any>) {
+    if (note?.access?.canEdit === false) {
+      setError("You have read-only access to this conversation.");
+      return false;
+    }
     let saved = false;
     setNote((n) => (n ? { ...n, ...patch } : n));
     setSaveState("Saving…");
@@ -809,7 +893,10 @@ function Conversation({
           ...opts,
         }),
       );
-      setNote(r.item);
+      setNote((previous) => ({
+        ...r.item,
+        access: r.item.access || previous?.access,
+      }));
       toast(
         r.mode === "extractive"
           ? "Notes extracted from your transcript"
@@ -853,6 +940,8 @@ function Conversation({
   }
   if (error && !note) return <ErrorBanner error={error} />;
   if (!note) return <Loading />;
+  const canEdit = note.access?.canEdit !== false,
+    canManage = note.access?.canManage !== false;
   const sections: Section[] = note.sections || [];
   const updateSection = (i: number, patch: Partial<Section>) => {
     const next = sections.map((s, j) => (j === i ? { ...s, ...patch } : s));
@@ -879,9 +968,12 @@ function Conversation({
           </Link>
           <input
             aria-label="Conversation title"
+            readOnly={!canEdit}
             value={note.title}
             onChange={(e) => setNote({ ...note, title: e.target.value })}
-            onBlur={(e) => void save({ title: e.target.value })}
+            onBlur={(e) => {
+              if (canEdit) void save({ title: e.target.value });
+            }}
           />
           <button
             className="icon-btn"
@@ -904,8 +996,15 @@ function Conversation({
             </button>
           ))}
         </div>
+        {!canEdit && (
+          <p className="readonly-note">
+            Shared with you · Read-only notes. You can view sources, ask
+            questions, and join the discussion.
+          </p>
+        )}
         <div className="note-toolbar">
           <button
+            disabled={!canEdit}
             onClick={async () => {
               try {
                 const r = await api("templates");
@@ -969,7 +1068,11 @@ function Conversation({
               <option key={value}>{value}</option>
             ))}
           </select>
-          <Button busy={busy} onClick={() => void generate()}>
+          <Button
+            busy={busy}
+            disabled={!canEdit}
+            onClick={() => void generate()}
+          >
             <Sparkles size={14} />
             Regenerate
           </Button>
@@ -998,7 +1101,7 @@ function Conversation({
                       <div>
                         <button
                           aria-label={`Move ${s.title} up`}
-                          disabled={i === 0}
+                          disabled={!canEdit || i === 0}
                           onClick={() => {
                             const arr = [...sections];
                             [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
@@ -1009,6 +1112,7 @@ function Conversation({
                         </button>
                         <button
                           aria-label={`Delete ${s.title}`}
+                          disabled={!canEdit}
                           onClick={() =>
                             void save({
                               sections: sections.filter((_, j) => j !== i),
@@ -1022,6 +1126,7 @@ function Conversation({
                     <input
                       className="section-title"
                       aria-label={`Section ${i + 1} title`}
+                      readOnly={!canEdit}
                       value={s.title}
                       onChange={(e) =>
                         setNote({
@@ -1032,11 +1137,13 @@ function Conversation({
                         })
                       }
                       onBlur={(e) =>
+                        canEdit &&
                         void updateSection(i, { title: e.target.value })
                       }
                     />
                     <textarea
                       aria-label={`${s.title} notes`}
+                      readOnly={!canEdit}
                       className={format}
                       style={{
                         height: `${Math.max(95, s.content.split("\n").length * 27 + Math.ceil(s.content.length / 95) * 17)}px`,
@@ -1051,6 +1158,7 @@ function Conversation({
                         })
                       }
                       onBlur={(e) =>
+                        canEdit &&
                         void updateSection(i, { content: e.target.value })
                       }
                     />
@@ -1060,7 +1168,11 @@ function Conversation({
                 <Empty
                   title="Ready for your notes"
                   action={
-                    <Button onClick={() => void generate()} busy={busy}>
+                    <Button
+                      onClick={() => void generate()}
+                      disabled={!canEdit}
+                      busy={busy}
+                    >
                       <Sparkles size={16} />
                       Generate notes
                     </Button>
@@ -1073,6 +1185,7 @@ function Conversation({
               )}
               <button
                 className="add-section"
+                disabled={!canEdit}
                 onClick={() =>
                   void save({
                     sections: [
@@ -1095,10 +1208,13 @@ function Conversation({
               <h2>The short version</h2>
               <textarea
                 aria-label="TLDR notes"
+                readOnly={!canEdit}
                 rows={12}
                 value={note.tldr || ""}
                 onChange={(e) => setNote({ ...note, tldr: e.target.value })}
-                onBlur={(e) => void save({ tldr: e.target.value })}
+                onBlur={(e) => {
+                  if (canEdit) void save({ tldr: e.target.value });
+                }}
                 placeholder="Write a brief overview of this conversation."
               />
             </section>
@@ -1106,7 +1222,7 @@ function Conversation({
             <>
               <div className="section-heading">
                 <h2>Conversation snippets</h2>
-                <Button onClick={() => setModal("snippet")}>
+                <Button disabled={!canEdit} onClick={() => setModal("snippet")}>
                   <Plus size={15} />
                   New snippet
                 </Button>
@@ -1119,6 +1235,7 @@ function Conversation({
                       <button
                         className="icon-btn"
                         aria-label={`Delete snippet ${s.title}`}
+                        disabled={!canEdit}
                         onClick={() =>
                           void save({
                             snippets: note.snippets.filter(
@@ -1165,6 +1282,12 @@ function Conversation({
       <aside className="note-side">
         <div className="side-tabs">
           <button
+            className={right === "discussion" ? "active" : ""}
+            onClick={() => setRight("discussion")}
+          >
+            Discussion
+          </button>
+          <button
             className={right === "sources" ? "active" : ""}
             onClick={() => setRight("sources")}
           >
@@ -1183,7 +1306,9 @@ function Conversation({
             Ask AI
           </button>
         </div>
-        {right === "sources" ? (
+        {right === "discussion" ? (
+          <ConversationComments id={id} />
+        ) : right === "sources" ? (
           <div className="sources-panel">
             <p className="eyebrow">SOURCES</p>
             <button
@@ -1203,7 +1328,7 @@ function Conversation({
                 Transcript{note.duration ? ` · ${note.duration}` : ""}
               </small>
             </button>
-            <Button onClick={() => setModal("transcript")}>
+            <Button disabled={!canEdit} onClick={() => setModal("transcript")}>
               <Plus size={15} />
               {note.transcript ? "Edit transcript" : "Add transcript"}
             </Button>
@@ -1217,6 +1342,7 @@ function Conversation({
             {note.file && /^(audio|video)\//.test(note.file.mimeType) && (
               <Button
                 busy={busy}
+                disabled={!canEdit}
                 onClick={async () => {
                   setBusy(true);
                   setError("");
@@ -1226,7 +1352,10 @@ function Conversation({
                       `conversations/${id}/transcribe`,
                       json("POST", {}),
                     );
-                    setNote(r.item);
+                    setNote((previous) => ({
+                      ...r.item,
+                      access: r.item.access || previous?.access,
+                    }));
                     toast("Recording transcribed");
                   } catch (e) {
                     setError((e as Error).message);
@@ -1242,12 +1371,21 @@ function Conversation({
               <Copy size={17} />
               Copy notes
             </button>
-            <button className="side-action" onClick={() => void showShares()}>
+            <button className="side-action" onClick={() => setModal("access")}>
+              <UserRound size={17} />
+              Team access
+            </button>
+            <button
+              className="side-action"
+              disabled={!canManage}
+              onClick={() => void showShares()}
+            >
               <Share2 size={17} />
               Share & export
             </button>
             <button
               className="side-action"
+              disabled={!canManage}
               onClick={() => setModal("collection")}
             >
               <FolderPlus size={17} />
@@ -1271,6 +1409,7 @@ function Conversation({
             </button>
             <button
               className="side-action"
+              disabled={!canEdit}
               onClick={() => void save({ archived: !note.archived })}
             >
               <Archive size={17} />
@@ -1278,6 +1417,7 @@ function Conversation({
             </button>
             <button
               className="side-action danger"
+              disabled={!canManage}
               onClick={async () => {
                 if (
                   !confirm(
@@ -1375,7 +1515,10 @@ function Conversation({
               <Empty
                 title="No transcript yet"
                 action={
-                  <Button onClick={() => setModal("transcript")}>
+                  <Button
+                    disabled={!canEdit}
+                    onClick={() => setModal("transcript")}
+                  >
                     Add transcript
                   </Button>
                 }
@@ -1570,6 +1713,7 @@ function Conversation({
                   <small>{new Date(v.createdAt || "").toLocaleString()}</small>
                 </span>
                 <Button
+                  disabled={!canManage}
                   onClick={async () => {
                     setBusy(true);
                     try {
@@ -1578,7 +1722,10 @@ function Conversation({
                         `conversations/${id}/versions/${v.id}/restore`,
                         json("POST", {}),
                       );
-                      setNote(r.item);
+                      setNote((previous) => ({
+                        ...r.item,
+                        access: r.item.access || previous?.access,
+                      }));
                       setModal("");
                       toast("Version restored");
                     } catch (e) {
@@ -1597,6 +1744,15 @@ function Conversation({
               A version will be saved when you change your notes.
             </Empty>
           )}
+        </Modal>
+      )}
+      {modal === "access" && (
+        <Modal title="Conversation access" onClose={() => setModal("")}>
+          <AccessPanel
+            kind="conversations"
+            id={id}
+            onChanged={() => void onChanged()}
+          />
         </Modal>
       )}
       {modal === "share" && (

@@ -810,7 +810,7 @@ test("settings are isolated and integration availability is reported honestly", 
   );
   assert.equal(
     items.find((item: { id: string }) => item.id === "email").status,
-    "unsupported",
+    "outbox",
   );
 });
 

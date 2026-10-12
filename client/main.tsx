@@ -45,15 +45,26 @@ const Marketing = lazy(() => import("./marketing/Marketing"));
 const Notes = lazy(() => import("./workspace/Notes"));
 const Templates = lazy(() => import("./workspace/Templates"));
 const SettingsPage = lazy(() => import("./workspace/Settings"));
+const WorkspaceAssistant = lazy(() => import("./workspace/WorkspaceAssistant"));
 const Business = lazy(() => import("./workspace/Business"));
 const Shared = lazy(() => import("./workspace/Shared"));
 const ScreeningInterview = lazy(() => import("./workspace/ScreeningInterview"));
+const ResetPassword = lazy(() => import("./ResetPassword"));
+const AcceptInvite = lazy(() => import("./workspace/AcceptInvite"));
 import "./styles.css";
 function Auth() {
   const location = useLocation(),
     signup = location.pathname === "/signup",
     navigate = useNavigate(),
     { reload } = useAuth();
+  const requestedReturn =
+    new URLSearchParams(location.search).get("returnTo") || "";
+  const returnTo =
+    /^(?:\/invitations\/[a-f0-9]{64}|\/verify-email\?token=[a-f0-9]{64})$/.test(
+      requestedReturn,
+    )
+      ? requestedReturn
+      : "/notes";
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   return (
@@ -89,7 +100,7 @@ function Auth() {
                 }),
               );
               await reload();
-              navigate("/notes");
+              navigate(returnTo);
             } catch (e) {
               setError((e as Error).message);
             } finally {
@@ -142,9 +153,16 @@ function Auth() {
             <ArrowRight size={17} />
           </Button>
         </form>
+        {!signup && (
+          <p>
+            <Link to="/reset-password">Forgot password?</Link>
+          </p>
+        )}
         <p className="auth-switch">
           {signup ? "Already have an account?" : "New to ArkOffer?"}{" "}
-          <Link to={signup ? "/login" : "/signup"}>
+          <Link
+            to={`${signup ? "/login" : "/signup"}${returnTo !== "/notes" ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+          >
             {signup ? "Sign in" : "Create a workspace"}
           </Link>
         </p>
@@ -166,7 +184,7 @@ const nav = [
   ["Notes", "/notes", FileText],
   ["Reports", "/app/reports", Table2],
   ["Job Posts", "/app/job-posts", FilePenLine],
-  ["fillmore coworker", "/app/fillmore", MessageSquare],
+  ["Workspace assistant", "/app/fillmore", MessageSquare],
 ] as const;
 function Workspace() {
   const { user, reload } = useAuth(),
@@ -221,7 +239,7 @@ function Workspace() {
                 {name === "Notes" && (
                   <ChevronDown size={14} className="nav-chevron" />
                 )}
-                {name === "fillmore coworker" && (
+                {name === "Workspace assistant" && (
                   <span className="new-label">New</span>
                 )}
               </Link>
@@ -314,6 +332,8 @@ function Workspace() {
           <Notes />
         ) : location.pathname.startsWith("/app/settings") ? (
           <SettingsPage />
+        ) : location.pathname === "/app/fillmore" ? (
+          <WorkspaceAssistant />
         ) : nav.some((entry) => entry[1] === location.pathname) ? (
           <Business
             key={location.pathname}
@@ -349,7 +369,19 @@ function App() {
           <Routes>
             <Route path="/login" element={<Auth />} />
             <Route path="/signup" element={<Auth />} />
+            <Route
+              path="/reset-password"
+              element={loading ? <Loading /> : <ResetPassword />}
+            />
+            <Route
+              path="/verify-email"
+              element={loading ? <Loading /> : <ResetPassword />}
+            />
             <Route path="/shared/:token" element={<Shared />} />
+            <Route
+              path="/invitations/:token"
+              element={loading ? <Loading /> : <AcceptInvite />}
+            />
             <Route path="/interviews/:token" element={<ScreeningInterview />} />
             <Route
               path="/notes/*"
