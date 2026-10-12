@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import "./application-review.css";
+import ApplicationDocuments, {
+  type DocumentReference,
+} from "./ApplicationDocuments";
 
 type Item = { id: string; [key: string]: unknown };
 type Criterion = {
@@ -112,6 +115,8 @@ function ReviewEditor({ id }: { id: string }) {
     [criteria, setCriteria] = useState<Criterion[]>([]),
     [dirty, setDirty] = useState(false);
   const [sources, setSources] = useState<string[]>([]),
+    [documents, setDocuments] = useState<DocumentReference[]>([]),
+    [documentBusy, setDocumentBusy] = useState(false),
     [consent, setConsent] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -395,10 +400,28 @@ function ReviewEditor({ id }: { id: string }) {
                 ) : (
                   <p>
                     No linked candidate professional fields are available.
-                    Select a transcript containing the candidate’s relevant
-                    evidence.
+                    Select a CV or transcript containing the candidate’s
+                    relevant evidence.
                   </p>
                 )}
+                <ApplicationDocuments
+                  applicationId={id}
+                  selected={documents}
+                  disabled={busy}
+                  onBusy={setDocumentBusy}
+                  onChange={(next) => {
+                    setDocuments(next);
+                    setConsent(false);
+                  }}
+                  onDeleted={async () => {
+                    // Hide cached output immediately; the server recomputes source access.
+                    setState((current) =>
+                      current ? { ...current, items: [] } : current,
+                    );
+                    const next = await request<State>(path);
+                    setState(next);
+                  }}
+                />
                 <p>
                   Select up to 5 transcripts you have verified belong to this
                   application. Nothing is matched by name. Combined evidence is
@@ -441,6 +464,7 @@ function ReviewEditor({ id }: { id: string }) {
                   <input
                     type="checkbox"
                     checked={consent}
+                    disabled={documentBusy}
                     onChange={(e) => setConsent(e.target.checked)}
                   />
                   I verified these sources belong to this application and agree
@@ -451,16 +475,20 @@ function ReviewEditor({ id }: { id: string }) {
                   className="business-button"
                   disabled={
                     !state.setup.enabled ||
+                    documentBusy ||
                     !consent ||
                     dirty ||
                     !state.criteria.revision ||
-                    (!sources.length && !state.candidateEvidence)
+                    (!sources.length &&
+                      !documents.length &&
+                      !state.candidateEvidence)
                   }
                   onClick={() =>
                     void action(async () => {
                       const response = await generate<Run>(path, {
                         criteriaRevision: state.criteria.revision,
                         conversationIds: sources,
+                        ...(documents.length ? { documents } : {}),
                         consent: true,
                       });
                       await load();

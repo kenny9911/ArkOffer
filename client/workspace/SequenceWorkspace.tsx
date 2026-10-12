@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowDown,
@@ -189,9 +189,26 @@ export default function SequenceWorkspace() {
     generationEpoch = useRef(0),
     mounted = useRef(true),
     saved = useRef("");
+  const pendingSelection = useRef<{
+    index: number;
+    body: string;
+    start: number;
+    end: number;
+  } | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const dirty = JSON.stringify(draft) !== saved.current;
+  useLayoutEffect(() => {
+    const selection = pendingSelection.current;
+    if (!selection) return;
+    pendingSelection.current = null;
+    const input = inputs.current[selection.index];
+    if (input?.value !== selection.body) return;
+    // Restore against the committed value before another keyboard/pointer action
+    // can move the cursor; a later animation frame could overwrite that action.
+    input.focus();
+    input.setSelectionRange(selection.start, selection.end);
+  }, [draft.steps]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -381,16 +398,14 @@ export default function SequenceWorkspace() {
       start = input?.selectionStart ?? step.body.length,
       end = input?.selectionEnd ?? start;
     const insertion = `{{${token}}}`;
-    update(index, {
-      body: step.body.slice(0, start) + insertion + step.body.slice(end),
-    });
-    requestAnimationFrame(() => {
-      input?.focus();
-      input?.setSelectionRange(
-        start + insertion.length,
-        start + insertion.length,
-      );
-    });
+    const body = step.body.slice(0, start) + insertion + step.body.slice(end);
+    pendingSelection.current = {
+      index,
+      body,
+      start: start + insertion.length,
+      end: start + insertion.length,
+    };
+    update(index, { body });
   };
   const formatSelection = (index: number, marker: string) => {
     const input = inputs.current[index],
@@ -407,14 +422,14 @@ export default function SequenceWorkspace() {
             )
             .join("\n")
         : `${marker}${selected}${marker}`;
-    update(index, {
-      body: step.body.slice(0, start) + content + step.body.slice(end),
-      format: "formatted",
-    });
-    requestAnimationFrame(() => {
-      input?.focus();
-      input?.setSelectionRange(start, start + content.length);
-    });
+    const body = step.body.slice(0, start) + content + step.body.slice(end);
+    pendingSelection.current = {
+      index,
+      body,
+      start,
+      end: start + content.length,
+    };
+    update(index, { body, format: "formatted" });
   };
   const editLink = (index: number) => {
     const input = inputs.current[index],

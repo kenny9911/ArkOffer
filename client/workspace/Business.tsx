@@ -32,6 +32,10 @@ import AiReports from "./AiReports";
 import ApplicationReview from "./ApplicationReview";
 import JobDrafting from "./JobDrafting";
 import JobCreation from "./JobCreation";
+import JobCollaboration, {
+  JobCollaborationSummary,
+  useJobCollaborationSummaries,
+} from "./JobCollaboration";
 import SequenceWorkspace from "./SequenceWorkspace";
 import SourcingWorkspace from "./SourcingWorkspace";
 import ScreeningDrafting from "./ScreeningDrafting";
@@ -2156,6 +2160,7 @@ function ScreeningPreview({
 
 function Jobs() {
   const jobs = useResource("jobs");
+  const collaboration = useJobCollaborationSummaries(jobs.items);
   const applications = useResource("applications");
   const [drafting, setDrafting] = useState<Item | "new" | null>(null);
   const [creating, setCreating] = useState(false);
@@ -2211,6 +2216,7 @@ function Jobs() {
           />
         </div>
         {jobs.error && <Alert>{jobs.error}</Alert>}
+        {collaboration.error && <Alert>{collaboration.error}</Alert>}
         {jobs.loading ? (
           <Loading />
         ) : !shown.length ? (
@@ -2259,6 +2265,9 @@ function Jobs() {
                   }{" "}
                   applications
                 </span>
+                <JobCollaborationSummary
+                  summary={collaboration.summaries[job.id]}
+                />
                 <Badge value={str(job.status, "draft")} />
                 <div className="business-row-actions">
                   <IconButton
@@ -2319,6 +2328,7 @@ function Jobs() {
               {str(preview.description, "No job description added yet.")}
             </div>
           </div>
+          <JobCollaboration key={preview.id} job={preview} />
           <div className="business-dialog-actions">
             <Btn
               secondary

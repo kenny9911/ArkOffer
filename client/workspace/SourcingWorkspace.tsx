@@ -578,7 +578,11 @@ export default function SourcingWorkspace({
           }}
         />
       </div>
-      <div className="sourcing-prompts">
+      <div
+        className="sourcing-prompts"
+        role="group"
+        aria-label="Agentic prompts"
+      >
         <strong>Agentic prompts</strong>
         <p>
           Describe who you are looking for. Review a search plan, then explore
