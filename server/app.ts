@@ -28,7 +28,14 @@ import {
   extractDocument,
   type DocumentExtraction,
 } from "./documents.js";
-import { registerScreening } from "./screening.js";
+import { registerScreening, ScreeningError } from "./screening.js";
+import { registerScreeningOutreach } from "./screening-outreach.js";
+import {
+  liveInterviewStatus,
+  registerLiveInterviewCallbacks,
+  registerLiveInterviews,
+} from "./live-interviews.js";
+import { registerReportSubscriptionUnsubscribe } from "./report-collaboration.js";
 import { registerAccount, type AccountOptions } from "./account.js";
 import { registerProviders } from "./providers.js";
 import { createBilling } from "./billing.js";
@@ -456,6 +463,7 @@ export function createApp(options: AppOptions = {}) {
     express.raw({ type: "application/json", limit: "1mb" }),
     billing.webhook,
   );
+  registerLiveInterviewCallbacks(app, store);
   app.use(express.json({ limit: "2mb" }));
   const limits = new Map<string, { count: number; until: number }>();
   function rateLimit(
@@ -488,7 +496,26 @@ export function createApp(options: AppOptions = {}) {
     }
     next();
   });
-  registerScreening(app, store);
+  const validateScreeningDelivery = (
+    snapshot: unknown,
+    workspaceId: string,
+  ) => {
+    const mode = (snapshot as { setup?: { interviewMode?: string } })?.setup
+      ?.interviewMode;
+    if (mode === "live" && !liveInterviewStatus(workspaceId).available)
+      throw new ScreeningError(
+        409,
+        "Live interviewing is not configured for this workspace. Complete its server setup before publishing or sending invitations.",
+      );
+  };
+  registerScreening(app, store, {
+    validateSnapshot: validateScreeningDelivery,
+  });
+  app.locals.liveInterviews = registerLiveInterviews(app, store);
+  app.locals.screeningOutreach = registerScreeningOutreach(app, store, {
+    validateSnapshot: validateScreeningDelivery,
+  });
+  registerReportSubscriptionUnsubscribe(app, store);
   registerVoiceScreening(app, store, {
     generateClarification: async ({
       workspaceId,

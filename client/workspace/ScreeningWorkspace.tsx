@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { api, json, Button, ErrorBanner, Field, Modal } from "../ui";
 import ScreeningDrafting, { type ScreeningProposal } from "./ScreeningDrafting";
+import ScreeningOutreach from "./ScreeningOutreach";
 import {
   newScreeningConfig,
   screeningMessage,
@@ -126,6 +127,7 @@ export default function ScreeningWorkspace({
   const [manual, setManual] = useState(false),
     [dirty, setDirty] = useState(false),
     [candidateDirty, setCandidateDirty] = useState(false),
+    [outreachDirty, setOutreachDirty] = useState(false),
     [query, setQuery] = useState("");
   const [panel, setPanel] = useState<
     "setup" | "interview" | "context" | "outreach"
@@ -137,6 +139,26 @@ export default function ScreeningWorkspace({
   const [voices, setVoices] = useState<Array<{ name: string; lang: string }>>(
     [],
   );
+  const [liveStatus, setLiveStatus] = useState<{
+    available: boolean;
+    missing: string[];
+    recording: boolean;
+  } | null>(null);
+  const [liveError, setLiveError] = useState("");
+  useEffect(() => {
+    const abort = new AbortController();
+    api<{ available: boolean; missing: string[]; recording: boolean }>(
+      "live-interviews/status",
+      { signal: abort.signal },
+    )
+      .then((status) => {
+        if (!abort.signal.aborted) setLiveStatus(status);
+      })
+      .catch((cause) => {
+        if (!abort.signal.aborted) setLiveError(cause.message);
+      });
+    return () => abort.abort();
+  }, []);
   const candidates =
     new URLSearchParams(location.search).get("tab") === "candidates";
   const isNew = routeId === "new",
@@ -176,13 +198,13 @@ export default function ScreeningWorkspace({
     return () => abort.abort();
   }, [routeId]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !outreachDirty) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty, outreachDirty]);
   useEffect(() => {
     const speech = window.speechSynthesis;
     const refresh = () =>
@@ -388,7 +410,7 @@ export default function ScreeningWorkspace({
           to="/app/screening"
           onClick={(event) => {
             if (
-              (dirty || candidateDirty) &&
+              (dirty || candidateDirty || outreachDirty) &&
               !window.confirm(
                 "Leave this screening without saving your changes?",
               )
@@ -416,7 +438,13 @@ export default function ScreeningWorkspace({
               </Button>
               {item && renderPublication && (
                 <Button
-                  disabled={dirty || busy || questions.length === 0}
+                  disabled={
+                    dirty ||
+                    busy ||
+                    questions.length === 0 ||
+                    (editor.screeningConfig.setup.interviewMode === "live" &&
+                      !liveStatus?.available)
+                  }
                   onClick={() => setPublishing(true)}
                 >
                   Publish
@@ -495,7 +523,7 @@ export default function ScreeningWorkspace({
               aria-selected={candidates}
               tabIndex={candidates ? 0 : -1}
               className={candidates ? "active" : ""}
-              disabled={!item}
+              disabled={!item || outreachDirty}
               onClick={() =>
                 navigate(`${location.pathname}?tab=candidates`, {
                   replace: true,
@@ -600,6 +628,63 @@ export default function ScreeningWorkspace({
                       </Field>
                     </div>
                     <div className="screen-card">
+                      <h3>Interview experience</h3>
+                      <Field label="Interview mode">
+                        <select
+                          value={editor.screeningConfig.setup.interviewMode}
+                          onChange={(event) =>
+                            config({
+                              setup: {
+                                ...editor.screeningConfig.setup,
+                                interviewMode: event.target
+                                  .value as ScreeningConfig["setup"]["interviewMode"],
+                              },
+                            })
+                          }
+                        >
+                          <option value="questionnaire">
+                            Questionnaire with optional recorded answers
+                          </option>
+                          <option value="live">Live video interview</option>
+                        </select>
+                      </Field>
+                      {editor.screeningConfig.setup.interviewMode ===
+                        "live" && (
+                        <>
+                          <Field
+                            label="Candidate camera"
+                            hint="Microphone access is required for a live interview. Camera access follows this setting."
+                          >
+                            <select
+                              value={editor.screeningConfig.setup.cameraPolicy}
+                              onChange={(event) =>
+                                config({
+                                  setup: {
+                                    ...editor.screeningConfig.setup,
+                                    cameraPolicy: event.target
+                                      .value as ScreeningConfig["setup"]["cameraPolicy"],
+                                  },
+                                })
+                              }
+                            >
+                              <option value="optional">Optional</option>
+                              <option value="required">Required</option>
+                              <option value="off">Off</option>
+                            </select>
+                          </Field>
+                          <p className="screen-hint" role="status">
+                            {liveStatus?.available
+                              ? "Candidates join a private live room, speak with the interviewer, and review their transcript before submitting. Video is live only; it is not recorded."
+                              : liveError
+                                ? `Live interview setup could not be checked: ${liveError}`
+                                : liveStatus
+                                  ? `Live interviewing needs server setup: ${liveStatus.missing.join(", ")}. You can save this draft; publishing is available after setup.`
+                                  : "Checking live interview setup…"}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div className="screen-card">
                       <h3>Language and voice</h3>
                       <Field label="Spoken prompt language">
                         <select
@@ -663,9 +748,9 @@ export default function ScreeningWorkspace({
                         </select>
                       </Field>
                       <p className="screen-hint">
-                        Questions keep the language you write. Voice answers use
-                        the hiring team’s configured transcription service;
-                        written answers are always available.
+                        Questions keep the language you write. Questionnaire
+                        narration uses a local browser voice; live interviews
+                        use the team’s configured speech provider.
                       </p>
                     </div>
                     <div className="screen-card">
@@ -1185,58 +1270,69 @@ export default function ScreeningWorkspace({
                     </div>
                   </>
                 )}
-                {panel === "outreach" && (
-                  <>
-                    <div className="screen-section-title">
-                      <h2>Outreach</h2>
-                      <p>
-                        Set the response window before sharing a candidate link.
-                      </p>
-                    </div>
-                    <div className="screen-card">
-                      <Field
-                        label="Candidate response deadline"
-                        hint="Applied when a new link is published. Existing links retain their original deadline."
+                <div hidden={panel !== "outreach"}>
+                  <div className="screen-section-title">
+                    <h2>Outreach</h2>
+                    <p>
+                      Set the response window before sharing a candidate link.
+                    </p>
+                  </div>
+                  <div className="screen-card">
+                    <Field
+                      label="Candidate response deadline"
+                      hint="Applied when a new link is published. Existing links retain their original deadline."
+                    >
+                      <select
+                        value={editor.screeningConfig.outreach.deadlineDays}
+                        onChange={(event) =>
+                          config({
+                            outreach: {
+                              deadlineDays: Number(event.target.value),
+                            },
+                          })
+                        }
                       >
-                        <select
-                          value={editor.screeningConfig.outreach.deadlineDays}
-                          onChange={(event) =>
-                            config({
-                              outreach: {
-                                deadlineDays: Number(event.target.value),
-                              },
-                            })
-                          }
-                        >
-                          {Array.from(
-                            { length: 30 },
-                            (_, index) => index + 1,
-                          ).map((day) => (
-                            <option value={day} key={day}>
-                              {day} {day === 1 ? "day" : "days"}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <p>
-                        Each link accepts one candidate response. You can revoke
-                        it from Candidates.
-                      </p>
-                      {item && renderPublication && (
-                        <Button
-                          disabled={dirty}
-                          onClick={() => setPublishing(true)}
-                        >
-                          Create candidate link
-                        </Button>
-                      )}
-                      <p className="screen-hint">
-                        Share links directly with candidates. Automated
-                        invitation emails and reminders are not enabled.
-                      </p>
-                    </div>
-                  </>
-                )}
+                        {Array.from(
+                          { length: 30 },
+                          (_, index) => index + 1,
+                        ).map((day) => (
+                          <option value={day} key={day}>
+                            {day} {day === 1 ? "day" : "days"}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <p>
+                      Each link accepts one candidate response. You can revoke
+                      it from Candidates.
+                    </p>
+                    {item && renderPublication && (
+                      <Button
+                        disabled={dirty}
+                        onClick={() => setPublishing(true)}
+                      >
+                        Create candidate link
+                      </Button>
+                    )}
+                  </div>
+                  {item ? (
+                    <ScreeningOutreach
+                      screeningId={item.id}
+                      revision={item.updatedAt}
+                      title={item.title}
+                      deadlineDays={
+                        editor.screeningConfig.outreach.deadlineDays
+                      }
+                      disabled={dirty || busy}
+                      onDirty={setOutreachDirty}
+                    />
+                  ) : (
+                    <p className="screen-hint">
+                      Save this screening before preparing invitations and
+                      reminders.
+                    </p>
+                  )}
+                </div>
               </main>
               <aside className="screen-assistant">
                 <nav

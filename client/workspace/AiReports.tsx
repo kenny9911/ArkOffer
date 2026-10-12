@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import "./ai-reports.css";
 import ReportDrafting from "./ReportDrafting";
+import ReportCollaboration from "./ReportCollaboration";
 import ReportPresentation, {
   initialPresentation,
   type Aggregation,
@@ -57,6 +58,10 @@ type View = Definition & {
   unavailableSourceCount?: number;
   presentation?: typeof initialPresentation;
   presentationRevision?: number;
+  permission?: "owner" | "editor" | "viewer";
+  canEdit?: boolean;
+  canManage?: boolean;
+  shared?: boolean;
 };
 type Source = {
   id: string;
@@ -180,7 +185,9 @@ function ReportCell({
   column,
   path,
   onError,
+  canEdit,
 }: {
+  canEdit: boolean;
   cell: Cell;
   column: Column;
   path: string;
@@ -224,6 +231,7 @@ function ReportCell({
         <label>
           Human annotation for {column.name}
           <textarea
+            disabled={!canEdit}
             maxLength={4000}
             rows={3}
             value={annotation}
@@ -232,7 +240,7 @@ function ReportCell({
         </label>
         <button
           type="button"
-          disabled={saving || annotation === saved}
+          disabled={!canEdit || saving || annotation === saved}
           onClick={async () => {
             setSaving(true);
             try {
@@ -310,6 +318,7 @@ export default function AiReports() {
   const [consent, setConsent] = useState(false),
     [confirmDelete, setConfirmDelete] = useState(false),
     [selectedRun, setSelectedRun] = useState("");
+  const [sharingOpen, setSharingOpen] = useState(0);
   const [listFilter, setListFilter] = useState("all");
   const [search, setSearch] = useState(""),
     [sort, setSort] = useState("updated"),
@@ -399,6 +408,8 @@ export default function AiReports() {
       if (mounted.current) setBusy(false);
     }
   }
+  const canEdit = detail?.item.canEdit !== false,
+    canManage = detail?.item.canManage !== false;
   const current = editing ? draft : detail ? definitionOf(detail.item) : draft;
   const matchedSources =
     index?.sources.filter(
@@ -407,6 +418,7 @@ export default function AiReports() {
         matchesFilters(source, current.filters),
     ) || [];
   const editable = (update: (value: Definition) => Definition) => {
+    if (!canEdit) return;
     if (!editing) editorRevision.current = detail?.item.revision || null;
     setDraft(update(current));
     setEditing(true);
@@ -512,6 +524,7 @@ export default function AiReports() {
                       column={column}
                       path={`/${selected}/runs/${run.id}`}
                       onError={setError}
+                      canEdit={canEdit}
                     />
                   ) : (
                     <td key={column.id}>Not available</td>
@@ -529,6 +542,12 @@ export default function AiReports() {
       .filter(
         (view) =>
           (listFilter !== "favorites" || view.favorite) &&
+          (listFilter !== "mine" ||
+            view.permission === undefined ||
+            view.permission === "owner") &&
+          (listFilter !== "shared" ||
+            view.permission === "viewer" ||
+            view.permission === "editor") &&
           (listFilter !== "recent" ||
             Date.parse(view.updatedAt || "") >= Date.now() - 30 * 86400000),
       )
@@ -567,8 +586,19 @@ export default function AiReports() {
         ) : (
           <div className="ai-report-actions">
             <span className="reports-private">
-              <LockKeyhole size={13} /> Private
+              <LockKeyhole size={13} />{" "}
+              {detail?.item.shared ? "Shared" : "Private"}
             </span>
+            {detail && (
+              <button
+                onClick={() => {
+                  setPanel("info");
+                  setSharingOpen((value) => value + 1);
+                }}
+              >
+                Share
+              </button>
+            )}
             {changed && detail && (
               <button onClick={discard} disabled={busy}>
                 Discard changes
@@ -578,6 +608,7 @@ export default function AiReports() {
               className="primary"
               onClick={() => void save()}
               disabled={
+                !canEdit ||
                 busy ||
                 (!changed && Boolean(detail)) ||
                 !current.sourceIds.length
@@ -620,11 +651,12 @@ export default function AiReports() {
             >
               <option value="all">All reports</option>
               <option value="mine">Created by me</option>
+              <option value="shared">Shared with me</option>
               <option value="recent">Updated in last 30 days</option>
               <option value="favorites">Favorites</option>
             </select>
             <span className="report-owner-filter">
-              <LockKeyhole size={14} /> Owned by you
+              <LockKeyhole size={14} /> Your accessible reports
             </span>
             <label className="report-sort">
               Sort by
@@ -695,7 +727,8 @@ export default function AiReports() {
           </div>
           <p className="reports-access-note">
             <LockKeyhole size={13} /> Reports and extracted answers are visible
-            only to you. Workspace analytics remain available separately.
+            only to their owner and named members. Source conversation
+            permissions remain separate.
           </p>
         </div>
       ) : selected && !detail ? (
@@ -733,6 +766,19 @@ export default function AiReports() {
                 Conversations <span>{current.sourceIds.length}</span>
               </button>
             </div>
+            {!canEdit && (
+              <p className="report-readonly">
+                You can view this report and export currently accessible
+                results. Ask the owner for edit access to change it.
+              </p>
+            )}
+            {!!detail?.item.unavailableSourceCount && (
+              <p className="report-readonly">
+                Some source conversations are unavailable. Ask their owner to
+                share them separately; report sharing does not grant
+                conversation access.
+              </p>
+            )}
             {tool && (
               <section
                 className="report-tool-panel"
@@ -759,386 +805,401 @@ export default function AiReports() {
                     <X size={16} />
                   </button>
                 </div>
-                {tool === "filters" && (
-                  <>
-                    <div className="ai-report-filters">
-                      <label>
-                        Title contains
-                        <input
-                          value={current.filters.title}
-                          maxLength={200}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: { ...d.filters, title: e.target.value },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Candidate contains
-                        <input
-                          value={current.filters.candidate || ""}
-                          maxLength={200}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: {
-                                ...d.filters,
-                                candidate: e.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Interviewer contains
-                        <input
-                          value={current.filters.interviewer || ""}
-                          maxLength={200}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: {
-                                ...d.filters,
-                                interviewer: e.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Date field
-                        <select
-                          value={current.filters.dateField || "created"}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: {
-                                ...d.filters,
-                                dateField: e.target.value as
-                                  "created" | "conversation",
-                              },
-                            }))
-                          }
-                        >
-                          <option value="created">Created date</option>
-                          <option value="conversation">
-                            Conversation date
-                          </option>
-                        </select>
-                      </label>
-                      <label>
-                        On or after
-                        <input
-                          type="date"
-                          value={current.filters.from}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: { ...d.filters, from: e.target.value },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        On or before
-                        <input
-                          type="date"
-                          value={current.filters.to}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: { ...d.filters, to: e.target.value },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Status
-                        <select
-                          value={current.filters.status || ""}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: { ...d.filters, status: e.target.value },
-                            }))
-                          }
-                        >
-                          <option value="">Any status</option>
-                          <option value="ready">Ready</option>
-                          <option value="processing">Processing</option>
-                          <option value="upcoming">Upcoming</option>
-                        </select>
-                      </label>
-                      <label>
-                        Minimum duration (minutes)
-                        <input
-                          type="number"
-                          min={0}
-                          max={10080}
-                          value={current.filters.durationMin ?? ""}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: {
-                                ...d.filters,
-                                durationMin:
-                                  e.target.value === ""
-                                    ? undefined
-                                    : Number(e.target.value),
-                              },
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Maximum duration (minutes)
-                        <input
-                          type="number"
-                          min={0}
-                          max={10080}
-                          value={current.filters.durationMax ?? ""}
-                          onChange={(e) =>
-                            editable((d) => ({
-                              ...d,
-                              filters: {
-                                ...d.filters,
-                                durationMax:
-                                  e.target.value === ""
-                                    ? undefined
-                                    : Number(e.target.value),
-                              },
-                            }))
-                          }
-                        />
-                      </label>
-                    </div>
-                    <p className="ai-report-muted">
-                      Filters apply to selected conversations. Duration uses the
-                      saved minute value; imported calendar events may contain
-                      planned duration. Missing values do not match duration or
-                      conversation-date filters.
-                    </p>
-                    <button
-                      onClick={() =>
-                        editable((d) => ({
-                          ...d,
-                          filters: { title: "", from: "", to: "" },
-                        }))
-                      }
-                    >
-                      Clear filters
-                    </button>
-                  </>
-                )}
-                {tool === "columns" && (
-                  <>
-                    <p className="ai-report-muted">
-                      Add up to five AI columns. Each answer includes the
-                      transcript evidence that supports it.
-                    </p>
-                    {current.columns.map((column, i) => (
-                      <div className="ai-report-column-editor" key={column.id}>
-                        <div className="ai-report-column-top">
-                          <label>
-                            Column {i + 1} name
-                            <input
-                              required
-                              maxLength={80}
-                              value={column.name}
-                              onChange={(e) =>
-                                editable((d) => ({
-                                  ...d,
-                                  columns: d.columns.map((c) =>
-                                    c.id === column.id
-                                      ? { ...c, name: e.target.value }
-                                      : c,
-                                  ),
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Column {i + 1} type
-                            <select
-                              value={column.type}
-                              onChange={(e) =>
-                                editable((d) => ({
-                                  ...d,
-                                  columns: d.columns.map((c) =>
-                                    c.id === column.id
-                                      ? {
-                                          ...c,
-                                          type: e.target
-                                            .value as Column["type"],
-                                        }
-                                      : c,
-                                  ),
-                                }))
-                              }
-                            >
-                              <option value="text">Text</option>
-                              <option value="number">Number</option>
-                              <option value="boolean">Yes / no</option>
-                              <option value="currency">Currency</option>
-                            </select>
-                          </label>
-                          <div className="report-column-actions">
-                            <button
-                              aria-label={`Move column ${i + 1} up`}
-                              disabled={i === 0}
-                              onClick={() =>
-                                editable((d) => {
-                                  const columns = [...d.columns];
-                                  [columns[i - 1], columns[i]] = [
-                                    columns[i],
-                                    columns[i - 1],
-                                  ];
-                                  return { ...d, columns };
-                                })
-                              }
-                            >
-                              <ArrowUp size={14} />
-                            </button>
-                            <button
-                              aria-label={`Move column ${i + 1} down`}
-                              disabled={i === current.columns.length - 1}
-                              onClick={() =>
-                                editable((d) => {
-                                  const columns = [...d.columns];
-                                  [columns[i + 1], columns[i]] = [
-                                    columns[i],
-                                    columns[i + 1],
-                                  ];
-                                  return { ...d, columns };
-                                })
-                              }
-                            >
-                              <ArrowDown size={14} />
-                            </button>
-                            <button
-                              aria-label={`Remove column ${i + 1}`}
-                              disabled={current.columns.length === 1}
-                              onClick={() =>
-                                editable((d) => ({
-                                  ...d,
-                                  columns: d.columns.filter(
-                                    (c) => c.id !== column.id,
-                                  ),
-                                }))
-                              }
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                        </div>
+                <fieldset className="report-tool-fieldset" disabled={!canEdit}>
+                  {tool === "filters" && (
+                    <>
+                      <div className="ai-report-filters">
                         <label>
-                          Column {i + 1} extraction instructions
-                          <textarea
-                            required
-                            maxLength={2000}
-                            rows={2}
-                            value={column.instruction}
+                          Title contains
+                          <input
+                            value={current.filters.title}
+                            maxLength={200}
                             onChange={(e) =>
                               editable((d) => ({
                                 ...d,
-                                columns: d.columns.map((c) =>
-                                  c.id === column.id
-                                    ? { ...c, instruction: e.target.value }
-                                    : c,
-                                ),
+                                filters: {
+                                  ...d.filters,
+                                  title: e.target.value,
+                                },
                               }))
                             }
-                            placeholder="Describe the answer to extract. Return not documented when the transcript does not provide it."
+                          />
+                        </label>
+                        <label>
+                          Candidate contains
+                          <input
+                            value={current.filters.candidate || ""}
+                            maxLength={200}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  candidate: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Interviewer contains
+                          <input
+                            value={current.filters.interviewer || ""}
+                            maxLength={200}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  interviewer: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Date field
+                          <select
+                            value={current.filters.dateField || "created"}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  dateField: e.target.value as
+                                    "created" | "conversation",
+                                },
+                              }))
+                            }
+                          >
+                            <option value="created">Created date</option>
+                            <option value="conversation">
+                              Conversation date
+                            </option>
+                          </select>
+                        </label>
+                        <label>
+                          On or after
+                          <input
+                            type="date"
+                            value={current.filters.from}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: { ...d.filters, from: e.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          On or before
+                          <input
+                            type="date"
+                            value={current.filters.to}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: { ...d.filters, to: e.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Status
+                          <select
+                            value={current.filters.status || ""}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  status: e.target.value,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="">Any status</option>
+                            <option value="ready">Ready</option>
+                            <option value="processing">Processing</option>
+                            <option value="upcoming">Upcoming</option>
+                          </select>
+                        </label>
+                        <label>
+                          Minimum duration (minutes)
+                          <input
+                            type="number"
+                            min={0}
+                            max={10080}
+                            value={current.filters.durationMin ?? ""}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  durationMin:
+                                    e.target.value === ""
+                                      ? undefined
+                                      : Number(e.target.value),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Maximum duration (minutes)
+                          <input
+                            type="number"
+                            min={0}
+                            max={10080}
+                            value={current.filters.durationMax ?? ""}
+                            onChange={(e) =>
+                              editable((d) => ({
+                                ...d,
+                                filters: {
+                                  ...d.filters,
+                                  durationMax:
+                                    e.target.value === ""
+                                      ? undefined
+                                      : Number(e.target.value),
+                                },
+                              }))
+                            }
                           />
                         </label>
                       </div>
-                    ))}
-                    <button
-                      disabled={current.columns.length >= 5}
-                      onClick={() =>
-                        editable((d) => ({
-                          ...d,
-                          columns: [
-                            ...d.columns,
-                            {
-                              id: crypto.randomUUID(),
-                              name: "",
-                              instruction: "",
-                              type: "text",
-                            },
-                          ],
-                        }))
-                      }
-                    >
-                      <Plus size={14} /> Add AI column
-                    </button>
-                  </>
-                )}
-                {tool === "sources" && (
-                  <>
-                    <p className="ai-report-muted">
-                      Choose up to {index.limits.notes} accessible
-                      conversations. Selection does not send transcripts to AI.
-                    </p>
-                    <input
-                      aria-label="Search source conversations"
-                      placeholder="Search conversations"
-                      value={sourceSearch}
-                      onChange={(e) => setSourceSearch(e.target.value)}
-                    />
-                    <div className="ai-report-sources">
-                      {index.sources
-                        .filter((source) =>
-                          source.title
-                            .toLowerCase()
-                            .includes(sourceSearch.toLowerCase()),
-                        )
-                        .map((source) => (
-                          <label className="ai-report-check" key={source.id}>
-                            <input
-                              type="checkbox"
-                              checked={current.sourceIds.includes(source.id)}
-                              disabled={
-                                !current.sourceIds.includes(source.id) &&
-                                current.sourceIds.length >= index.limits.notes
-                              }
+                      <p className="ai-report-muted">
+                        Filters apply to selected conversations. Duration uses
+                        the saved minute value; imported calendar events may
+                        contain planned duration. Missing values do not match
+                        duration or conversation-date filters.
+                      </p>
+                      <button
+                        onClick={() =>
+                          editable((d) => ({
+                            ...d,
+                            filters: { title: "", from: "", to: "" },
+                          }))
+                        }
+                      >
+                        Clear filters
+                      </button>
+                    </>
+                  )}
+                  {tool === "columns" && (
+                    <>
+                      <p className="ai-report-muted">
+                        Add up to five AI columns. Each answer includes the
+                        transcript evidence that supports it.
+                      </p>
+                      {current.columns.map((column, i) => (
+                        <div
+                          className="ai-report-column-editor"
+                          key={column.id}
+                        >
+                          <div className="ai-report-column-top">
+                            <label>
+                              Column {i + 1} name
+                              <input
+                                required
+                                maxLength={80}
+                                value={column.name}
+                                onChange={(e) =>
+                                  editable((d) => ({
+                                    ...d,
+                                    columns: d.columns.map((c) =>
+                                      c.id === column.id
+                                        ? { ...c, name: e.target.value }
+                                        : c,
+                                    ),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              Column {i + 1} type
+                              <select
+                                value={column.type}
+                                onChange={(e) =>
+                                  editable((d) => ({
+                                    ...d,
+                                    columns: d.columns.map((c) =>
+                                      c.id === column.id
+                                        ? {
+                                            ...c,
+                                            type: e.target
+                                              .value as Column["type"],
+                                          }
+                                        : c,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <option value="text">Text</option>
+                                <option value="number">Number</option>
+                                <option value="boolean">Yes / no</option>
+                                <option value="currency">Currency</option>
+                              </select>
+                            </label>
+                            <div className="report-column-actions">
+                              <button
+                                aria-label={`Move column ${i + 1} up`}
+                                disabled={i === 0}
+                                onClick={() =>
+                                  editable((d) => {
+                                    const columns = [...d.columns];
+                                    [columns[i - 1], columns[i]] = [
+                                      columns[i],
+                                      columns[i - 1],
+                                    ];
+                                    return { ...d, columns };
+                                  })
+                                }
+                              >
+                                <ArrowUp size={14} />
+                              </button>
+                              <button
+                                aria-label={`Move column ${i + 1} down`}
+                                disabled={i === current.columns.length - 1}
+                                onClick={() =>
+                                  editable((d) => {
+                                    const columns = [...d.columns];
+                                    [columns[i + 1], columns[i]] = [
+                                      columns[i],
+                                      columns[i + 1],
+                                    ];
+                                    return { ...d, columns };
+                                  })
+                                }
+                              >
+                                <ArrowDown size={14} />
+                              </button>
+                              <button
+                                aria-label={`Remove column ${i + 1}`}
+                                disabled={current.columns.length === 1}
+                                onClick={() =>
+                                  editable((d) => ({
+                                    ...d,
+                                    columns: d.columns.filter(
+                                      (c) => c.id !== column.id,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </div>
+                          <label>
+                            Column {i + 1} extraction instructions
+                            <textarea
+                              required
+                              maxLength={2000}
+                              rows={2}
+                              value={column.instruction}
                               onChange={(e) =>
                                 editable((d) => ({
                                   ...d,
-                                  sourceIds: e.target.checked
-                                    ? [...d.sourceIds, source.id]
-                                    : d.sourceIds.filter(
-                                        (id) => id !== source.id,
-                                      ),
+                                  columns: d.columns.map((c) =>
+                                    c.id === column.id
+                                      ? { ...c, instruction: e.target.value }
+                                      : c,
+                                  ),
                                 }))
                               }
+                              placeholder="Describe the answer to extract. Return not documented when the transcript does not provide it."
                             />
-                            <span>
-                              {source.title}
-                              <small>
-                                {source.characters.toLocaleString()} transcript
-                                characters · {formatDate(source.createdAt)}
-                              </small>
-                            </span>
                           </label>
-                        ))}
-                      {!index.sources.length && (
-                        <p>
-                          Add an unarchived conversation with a transcript to
-                          select sources.
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      disabled={!current.sourceIds.length}
-                      onClick={() => editable((d) => ({ ...d, sourceIds: [] }))}
-                    >
-                      Clear selection
-                    </button>
-                  </>
-                )}
+                        </div>
+                      ))}
+                      <button
+                        disabled={current.columns.length >= 5}
+                        onClick={() =>
+                          editable((d) => ({
+                            ...d,
+                            columns: [
+                              ...d.columns,
+                              {
+                                id: crypto.randomUUID(),
+                                name: "",
+                                instruction: "",
+                                type: "text",
+                              },
+                            ],
+                          }))
+                        }
+                      >
+                        <Plus size={14} /> Add AI column
+                      </button>
+                    </>
+                  )}
+                  {tool === "sources" && (
+                    <>
+                      <p className="ai-report-muted">
+                        Choose up to {index.limits.notes} accessible
+                        conversations. Selection does not send transcripts to
+                        AI.
+                      </p>
+                      <input
+                        aria-label="Search source conversations"
+                        placeholder="Search conversations"
+                        value={sourceSearch}
+                        onChange={(e) => setSourceSearch(e.target.value)}
+                      />
+                      <div className="ai-report-sources">
+                        {index.sources
+                          .filter((source) =>
+                            source.title
+                              .toLowerCase()
+                              .includes(sourceSearch.toLowerCase()),
+                          )
+                          .map((source) => (
+                            <label className="ai-report-check" key={source.id}>
+                              <input
+                                type="checkbox"
+                                checked={current.sourceIds.includes(source.id)}
+                                disabled={
+                                  !current.sourceIds.includes(source.id) &&
+                                  current.sourceIds.length >= index.limits.notes
+                                }
+                                onChange={(e) =>
+                                  editable((d) => ({
+                                    ...d,
+                                    sourceIds: e.target.checked
+                                      ? [...d.sourceIds, source.id]
+                                      : d.sourceIds.filter(
+                                          (id) => id !== source.id,
+                                        ),
+                                  }))
+                                }
+                              />
+                              <span>
+                                {source.title}
+                                <small>
+                                  {source.characters.toLocaleString()}{" "}
+                                  transcript characters ·{" "}
+                                  {formatDate(source.createdAt)}
+                                </small>
+                              </span>
+                            </label>
+                          ))}
+                        {!index.sources.length && (
+                          <p>
+                            Add an unarchived conversation with a transcript to
+                            select sources.
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        disabled={!current.sourceIds.length}
+                        onClick={() =>
+                          editable((d) => ({ ...d, sourceIds: [] }))
+                        }
+                      >
+                        Clear selection
+                      </button>
+                    </>
+                  )}
+                </fieldset>
               </section>
             )}
             <div className="report-table-summary">
@@ -1183,7 +1244,7 @@ export default function AiReports() {
                       </option>
                     ))}
                   </select>
-                  {active(run) && (
+                  {canEdit && active(run) && (
                     <button
                       disabled={busy}
                       onClick={() =>
@@ -1301,6 +1362,7 @@ export default function AiReports() {
                 <button
                   key={value}
                   role="tab"
+                  disabled={value === "agent" && !canEdit}
                   aria-selected={panel === value}
                   onClick={() => setPanel(value)}
                 >
@@ -1327,6 +1389,7 @@ export default function AiReports() {
                     Title
                     <input
                       aria-label="Report name"
+                      disabled={!canEdit}
                       required
                       maxLength={120}
                       placeholder="Untitled report"
@@ -1340,6 +1403,7 @@ export default function AiReports() {
                     Description
                     <textarea
                       aria-label="What do you want to learn?"
+                      disabled={!canEdit}
                       required
                       maxLength={4000}
                       rows={4}
@@ -1352,7 +1416,10 @@ export default function AiReports() {
                   </label>
                   <div className="report-info-meta">
                     <span>
-                      <LockKeyhole size={14} /> Only you can access this report
+                      <LockKeyhole size={14} />{" "}
+                      {detail?.item.shared
+                        ? "Shared with named workspace members"
+                        : "Private to the report owner"}
                     </span>
                     <span>
                       Created{" "}
@@ -1365,6 +1432,7 @@ export default function AiReports() {
                   </div>
                   <button
                     className="report-agent-shortcut"
+                    disabled={!canEdit}
                     onClick={() => setPanel("agent")}
                   >
                     <Sparkles size={15} /> Draft report with AI
@@ -1406,6 +1474,7 @@ export default function AiReports() {
                             checked={consent}
                             onChange={(e) => setConsent(e.target.checked)}
                             disabled={
+                              !canEdit ||
                               busy ||
                               Boolean(running) ||
                               changed ||
@@ -1421,6 +1490,7 @@ export default function AiReports() {
                         <button
                           className="primary"
                           disabled={
+                            !canEdit ||
                             busy ||
                             !consent ||
                             Boolean(running) ||
@@ -1509,7 +1579,7 @@ export default function AiReports() {
                       <button
                         className="report-delete"
                         onClick={() => setConfirmDelete(!confirmDelete)}
-                        disabled={busy}
+                        disabled={busy || !canManage}
                       >
                         Delete view
                       </button>
@@ -1539,30 +1609,46 @@ export default function AiReports() {
                   )}
                 </>
               )}
-              <div hidden={panel !== "agent"}>
-                <ReportDrafting
-                  viewId={selected || undefined}
-                  revision={
-                    editing
-                      ? editorRevision.current || undefined
-                      : detail?.item.revision
-                  }
-                  editorIdentity={JSON.stringify(current)}
-                  onClose={() => setPanel("info")}
-                  onUse={(proposal) => {
-                    editable((d) => ({ ...proposal, sourceIds: d.sourceIds }));
-                    setPanel("info");
-                    setMessage(
-                      "Proposal applied to the editor. Review columns, filters and selected sources before saving.",
-                    );
+              {panel === "info" && detail && (
+                <ReportCollaboration
+                  key={detail.item.id}
+                  viewId={detail.item.id}
+                  open={sharingOpen}
+                  onChanged={async () => {
+                    await Promise.all([loadDetail(selected), loadIndex()]);
                   }}
                 />
-              </div>
+              )}
+              {canEdit && (
+                <div hidden={panel !== "agent"}>
+                  <ReportDrafting
+                    viewId={selected || undefined}
+                    revision={
+                      editing
+                        ? editorRevision.current || undefined
+                        : detail?.item.revision
+                    }
+                    editorIdentity={JSON.stringify(current)}
+                    onClose={() => setPanel("info")}
+                    onUse={(proposal) => {
+                      editable((d) => ({
+                        ...proposal,
+                        sourceIds: d.sourceIds,
+                      }));
+                      setPanel("info");
+                      setMessage(
+                        "Proposal applied to the editor. Review columns, filters and selected sources before saving.",
+                      );
+                    }}
+                  />
+                </div>
+              )}
               {panel === "charts" &&
                 (detail ? (
                   <ReportPresentation
                     key={`${detail.item.id}:${run?.id || "definition"}:${detail.item.presentationRevision || 1}`}
                     viewId={detail.item.id}
+                    readOnly={!canEdit}
                     revision={detail.item.presentationRevision || 1}
                     saved={detail.item.presentation || initialPresentation}
                     columns={run?.columns || detail.item.columns}

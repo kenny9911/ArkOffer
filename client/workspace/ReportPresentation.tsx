@@ -44,8 +44,10 @@ export default function ReportPresentation({
   runId,
   onSaved,
   onError,
+  readOnly = false,
 }: {
   viewId: string;
+  readOnly?: boolean;
   revision: number;
   saved: Presentation;
   columns: { id: string; name: string; type: string }[];
@@ -75,7 +77,10 @@ export default function ReportPresentation({
         Group existing answers and compare values. Saving presentation does not
         extract again or interrupt an active run.
       </p>
-      <div className="report-presentation-controls">
+      <fieldset
+        className="report-presentation-controls report-tool-fieldset"
+        disabled={readOnly}
+      >
         <label>
           Display
           <select
@@ -187,7 +192,7 @@ export default function ReportPresentation({
         >
           {busy ? "Saving…" : "Save presentation"}
         </button>
-      </div>
+      </fieldset>
       {aggregation &&
         (!aggregation.compatible ? (
           <p role="alert">

@@ -30,6 +30,8 @@ export function newScreeningConfig(): ScreeningConfig {
         "Thank you for sharing your experience. Our team will review your responses.",
       language: "en-US",
       voice: "",
+      interviewMode: "questionnaire",
+      cameraPolicy: "optional",
     },
     context: { role: "", company: "" },
     outreach: { deadlineDays: 7 },

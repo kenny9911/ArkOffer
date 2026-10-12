@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { ArrowRight, Check, FileText, Layers, LockKeyhole } from "lucide-react";
 import "./business.css";
 import VoiceScreening from "./VoiceScreening";
+import LiveInterview from "./LiveInterview";
 
 type Question = {
   id: string;
@@ -34,6 +35,8 @@ export default function ScreeningInterview() {
   const [submitted, setSubmitted] = useState(false),
     [justSubmitted, setJustSubmitted] = useState(false),
     [busy, setBusy] = useState(false);
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveSessionId, setLiveSessionId] = useState<string | undefined>();
   const [voiceActive, setVoiceActive] = useState(false),
     [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceEvidence, setVoiceEvidence] = useState<Record<string, string>>(
@@ -49,6 +52,8 @@ export default function ScreeningInterview() {
     setJustSubmitted(false);
     setAnswers({});
     setVoiceEvidence({});
+    setLiveSessionId(undefined);
+    setLiveBusy(false);
     setVoiceActive(false);
     setVoiceBusy(false);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) {
@@ -87,7 +92,7 @@ export default function ScreeningInterview() {
   }, [token]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!interview || busy || voiceBusy) return;
+    if (!interview || busy || voiceBusy || liveBusy) return;
     const form = new FormData(event.currentTarget);
     setBusy(true);
     setError("");
@@ -102,6 +107,7 @@ export default function ScreeningInterview() {
             candidateName: form.get("candidateName"),
             email: form.get("email"),
             consent: form.get("consent") === "on",
+            liveSessionId,
             voiceEvidence: Object.entries(voiceEvidence).map(
               ([questionId, turnId]) => ({ questionId, turnId }),
             ),
@@ -237,27 +243,41 @@ export default function ScreeningInterview() {
                     </label>
                   </div>
                 </section>
-                <VoiceScreening
-                  key={token}
-                  token={token!}
-                  questions={interview.questions}
-                  language={interview.setup?.language}
-                  voiceName={interview.setup?.voice}
-                  answers={answers}
-                  onAnswer={(id, value) =>
-                    setAnswers((current) => ({ ...current, [id]: value }))
-                  }
-                  onEvidence={(id, turnId) =>
-                    setVoiceEvidence((current) => {
-                      const next = { ...current };
-                      if (turnId) next[id] = turnId;
-                      else delete next[id];
-                      return next;
-                    })
-                  }
-                  onActive={setVoiceActive}
-                  onBusy={setVoiceBusy}
-                />
+                {!voiceActive && (
+                  <LiveInterview
+                    key={`live-${token}`}
+                    token={token!}
+                    questions={interview.questions}
+                    onBusy={setLiveBusy}
+                    onReview={(id, values) => {
+                      setLiveSessionId(id);
+                      setAnswers((current) => ({ ...current, ...values }));
+                    }}
+                  />
+                )}
+                {!liveBusy && (
+                  <VoiceScreening
+                    key={token}
+                    token={token!}
+                    questions={interview.questions}
+                    language={interview.setup?.language}
+                    voiceName={interview.setup?.voice}
+                    answers={answers}
+                    onAnswer={(id, value) =>
+                      setAnswers((current) => ({ ...current, [id]: value }))
+                    }
+                    onEvidence={(id, turnId) =>
+                      setVoiceEvidence((current) => {
+                        const next = { ...current };
+                        if (turnId) next[id] = turnId;
+                        else delete next[id];
+                        return next;
+                      })
+                    }
+                    onActive={setVoiceActive}
+                    onBusy={setVoiceBusy}
+                  />
+                )}
                 <section
                   className="screening-interview-section"
                   hidden={voiceActive}
@@ -350,7 +370,10 @@ export default function ScreeningInterview() {
                     className="business-button"
                     type="submit"
                     disabled={
-                      busy || voiceBusy || completedCount < requiredCount
+                      busy ||
+                      voiceBusy ||
+                      liveBusy ||
+                      completedCount < requiredCount
                     }
                   >
                     {busy ? "Submitting…" : "Submit responses"}

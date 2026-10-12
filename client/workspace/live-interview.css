@@ -1,0 +1,122 @@
+.live-interview {
+  margin: 24px 0;
+  border: 1px solid #dce1e8;
+  border-radius: 14px;
+  padding: 24px;
+  background: #f8fafc;
+  color: #263240;
+}
+.live-interview header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.live-interview h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+.live-interview p {
+  line-height: 1.55;
+  margin: 8px 0;
+}
+.live-interview-stage {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.live-interview-stage video,
+.live-interview-placeholder,
+.live-interview-agent {
+  border-radius: 10px;
+  background: #202630;
+  width: 100%;
+  aspect-ratio: 16/10;
+  object-fit: cover;
+  color: #e9eef5;
+}
+.live-interview-placeholder,
+.live-interview-agent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.live-interview-agent {
+  background: #eef0ff;
+  color: #3f4560;
+}
+.live-interview-agent > span {
+  display: grid;
+  place-items: center;
+  background: #d8dcfa;
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  font-size: 30px;
+}
+.live-interview-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 18px 0 12px;
+  line-height: 1.5;
+}
+.live-interview-check input {
+  width: 18px !important;
+  min-width: 18px;
+  margin: 3px 0 0;
+  height: 18px;
+}
+.live-interview-note {
+  color: #627080;
+  font-size: 13px;
+}
+.live-interview-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.live-interview .business-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.live-interview-transcript {
+  margin-top: 20px;
+  max-height: 350px;
+  overflow: auto;
+  background: white;
+  border: 1px solid #e3e6ec;
+  border-radius: 8px;
+  padding: 14px;
+}
+.live-interview-transcript summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.live-interview-transcript > div {
+  padding: 12px 0;
+  border-bottom: 1px solid #eef0f3;
+  white-space: pre-wrap;
+}
+.live-interview [role="alert"] {
+  color: #9b352e;
+  margin-top: 14px;
+}
+@media (max-width: 600px) {
+  .live-interview {
+    padding: 16px;
+  }
+  .live-interview-stage {
+    grid-template-columns: 1fr;
+  }
+  .live-interview-agent {
+    aspect-ratio: 3/1;
+  }
+}
