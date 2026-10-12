@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import "./business.css";
+import CandidateEnrichment from "./CandidateEnrichment";
 import SequenceDelivery from "./SequenceDelivery";
 
 type Item = {
@@ -776,6 +777,10 @@ function Candidates() {
               <span>No skills added</span>
             )}
           </div>
+          <CandidateEnrichment
+            candidate={selected}
+            onApplied={() => candidates.reload()}
+          />
           <h4>Notes</h4>
           <p className="business-pre-wrap">
             {str(selected.notes, "No notes yet.")}
@@ -1907,6 +1912,12 @@ type ScreeningResponse = {
     prompt: string;
     type: string;
     value: string;
+    voiceEvidence?: {
+      originalTranscript: string;
+      durationMs: number;
+      transcribedAt: string;
+      candidateEdited: boolean;
+    };
   }[];
 };
 function ScreeningPublicationDialog({
@@ -1985,7 +1996,7 @@ function ScreeningPublicationDialog({
       ) : (
         <>
           <p className="business-dialog-copy">
-            Create a link for one candidate to complete this text questionnaire
+            Create a link for one candidate to complete this questionnaire
             without signing in. Their name, email and answers will be collected
             only after they acknowledge sharing them with your hiring team.
           </p>
@@ -2121,6 +2132,29 @@ function ScreeningResponses({
                         <p>
                           {answer.value || "No answer provided (optional)."}
                         </p>
+                        {answer.voiceEvidence && (
+                          <details>
+                            <summary>
+                              Voice transcript ·{" "}
+                              {Math.round(
+                                answer.voiceEvidence.durationMs / 1000,
+                              )}{" "}
+                              seconds
+                              {answer.voiceEvidence.candidateEdited
+                                ? " · candidate corrected"
+                                : ""}
+                            </summary>
+                            <p>{answer.voiceEvidence.originalTranscript}</p>
+                            <small>
+                              Transcribed{" "}
+                              {new Date(
+                                answer.voiceEvidence.transcribedAt,
+                              ).toLocaleString()}
+                              . The submitted answer above is the candidate’s
+                              reviewed response.
+                            </small>
+                          </details>
+                        )}
                       </div>
                     ))}
                     <p className="business-help">

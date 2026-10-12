@@ -13,7 +13,7 @@
     "test": "tsx --test tests/server/*.test.ts",
     "test:e2e": "playwright test",
     "check": "npm run test && npm run build",
-    "dev:api": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
+    "dev:api": "NODE_ENV=development node --env-file-if-exists=.env --import tsx --watch server/index.ts",
     "dev:web": "vite --host 127.0.0.1",
     "format:check": "prettier --check client server tests *.ts *.json .github/workflows/ci.yml"
   },

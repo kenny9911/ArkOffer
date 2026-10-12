@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { ArrowRight, Check, FileText, Layers, LockKeyhole } from "lucide-react";
 import "./business.css";
+import VoiceScreening from "./VoiceScreening";
 
 type Question = {
   id: string;
@@ -26,6 +27,11 @@ export default function ScreeningInterview() {
   const [submitted, setSubmitted] = useState(false),
     [justSubmitted, setJustSubmitted] = useState(false),
     [busy, setBusy] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false),
+    [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceEvidence, setVoiceEvidence] = useState<Record<string, string>>(
+    {},
+  );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   useEffect(() => {
     const controller = new AbortController();
@@ -35,6 +41,9 @@ export default function ScreeningInterview() {
     setSubmitted(false);
     setJustSubmitted(false);
     setAnswers({});
+    setVoiceEvidence({});
+    setVoiceActive(false);
+    setVoiceBusy(false);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) {
       setError("This screening link is unavailable or has expired.");
       setLoading(false);
@@ -71,7 +80,7 @@ export default function ScreeningInterview() {
   }, [token]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!interview || busy) return;
+    if (!interview || busy || voiceBusy) return;
     const form = new FormData(event.currentTarget);
     setBusy(true);
     setError("");
@@ -86,6 +95,9 @@ export default function ScreeningInterview() {
             candidateName: form.get("candidateName"),
             email: form.get("email"),
             consent: form.get("consent") === "on",
+            voiceEvidence: Object.entries(voiceEvidence).map(
+              ([questionId, turnId]) => ({ questionId, turnId }),
+            ),
             answers: interview.questions.map((question) => ({
               questionId: question.id,
               value: answers[question.id] || "",
@@ -212,7 +224,29 @@ export default function ScreeningInterview() {
                     </label>
                   </div>
                 </section>
-                <section className="screening-interview-section">
+                <VoiceScreening
+                  key={token}
+                  token={token!}
+                  questions={interview.questions}
+                  answers={answers}
+                  onAnswer={(id, value) =>
+                    setAnswers((current) => ({ ...current, [id]: value }))
+                  }
+                  onEvidence={(id, turnId) =>
+                    setVoiceEvidence((current) => {
+                      const next = { ...current };
+                      if (turnId) next[id] = turnId;
+                      else delete next[id];
+                      return next;
+                    })
+                  }
+                  onActive={setVoiceActive}
+                  onBusy={setVoiceBusy}
+                />
+                <section
+                  className="screening-interview-section"
+                  hidden={voiceActive}
+                >
                   <div className="screening-interview-questions-heading">
                     <h2>Your experience</h2>
                     <span>
@@ -238,7 +272,7 @@ export default function ScreeningInterview() {
                           id={`answer-${question.id}`}
                           rows={5}
                           maxLength={10_000}
-                          required={question.required}
+                          required={question.required && !voiceActive}
                           value={answers[question.id] || ""}
                           onChange={(event) =>
                             setAnswers((current) => ({
@@ -251,7 +285,7 @@ export default function ScreeningInterview() {
                       ) : (
                         <select
                           id={`answer-${question.id}`}
-                          required={question.required}
+                          required={question.required && !voiceActive}
                           value={answers[question.id] || ""}
                           onChange={(event) =>
                             setAnswers((current) => ({
@@ -294,7 +328,9 @@ export default function ScreeningInterview() {
                   <button
                     className="business-button"
                     type="submit"
-                    disabled={busy}
+                    disabled={
+                      busy || voiceBusy || completedCount < requiredCount
+                    }
                   >
                     {busy ? "Submitting…" : "Submit responses"}
                     <ArrowRight size={16} />

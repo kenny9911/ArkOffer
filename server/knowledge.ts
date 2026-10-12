@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { sessionUser, type AuthRequest, type User } from "./auth.js";
+import { sessionUser, userById, type AuthRequest, type User } from "./auth.js";
 import type { Store } from "./db.js";
 import { mayReadConversation } from "./access.js";
 
-type Citation = {
+export type Citation = {
   conversationId: string;
   title: string;
   text: string;
   start: number;
   end: number;
 };
-type Options = {
+export type KnowledgeOptions = {
+  mode?: string;
   complete?: (
     user: User,
     evidence: Citation[],
@@ -30,11 +31,219 @@ class KnowledgeError extends Error {
 const fail = (status: number, message: string): never => {
   throw new KnowledgeError(status, message);
 };
+
+export type KnowledgeAnswer = {
+  answer: string;
+  citations: Citation[];
+  mode: string;
+};
+const noMatch =
+  "No matching excerpts were found in the conversations you can access. Try a specific phrase from a transcript.";
+const limitNotice =
+  "\n\nSearch reached its workspace limit. Select a specific source conversation to search older material.";
+const proofSchema = z
+  .object({
+    answer: z.string().min(1).max(21_000),
+    mode: z.string().min(1).max(50),
+    citations: z
+      .array(
+        z
+          .object({
+            conversationId: z.uuid(),
+            title: z.string().max(10_000),
+            text: z.string().min(1).max(900),
+            start: z.number().int().min(0).max(800_000),
+            end: z.number().int().min(1).max(800_000),
+          })
+          .strict(),
+      )
+      .max(12),
+  })
+  .strict();
+
+/** Shared retrieval and source proof validation for web and explicitly authorized delivery adapters. */
+export function createKnowledgeEngine(
+  store: Store,
+  options: KnowledgeOptions = {},
+) {
+  function validateAnswer(user: User, result: unknown): boolean {
+    const active = userById(store, user.id, user.workspaceId);
+    if (!active) return false;
+    const parsed = proofSchema.safeParse(result);
+    if (!parsed.success) return false;
+    const proof = parsed.data;
+    if (!proof.citations.length)
+      return (
+        proof.mode === "extractive" &&
+        [noMatch, noMatch + limitNotice].includes(proof.answer)
+      );
+    const seen = new Set<string>();
+    return proof.citations.every((citation) => {
+      const key = `${citation.conversationId}:${citation.start}:${citation.end}`;
+      if (
+        seen.has(key) ||
+        citation.end <= citation.start ||
+        citation.end - citation.start !== citation.text.length
+      )
+        return false;
+      seen.add(key);
+      if (!mayReadConversation(store, active, citation.conversationId))
+        return false;
+      const item = store.get(
+        active.workspaceId,
+        "conversations",
+        citation.conversationId,
+      );
+      return (
+        !!item &&
+        !item.archived &&
+        String(item.title || "Conversation") === citation.title &&
+        String(item.transcript || "").slice(citation.start, citation.end) ===
+          citation.text
+      );
+    });
+  }
+  async function answer(
+    user: User,
+    rawQuestion: string,
+    rawConversationIds?: string[],
+  ): Promise<KnowledgeAnswer> {
+    const question = z.string().trim().min(1).max(2000).parse(rawQuestion);
+    const conversationIds = z
+      .array(z.uuid())
+      .max(50)
+      .optional()
+      .parse(rawConversationIds);
+    const current =
+      userById(store, user.id, user.workspaceId) ||
+      fail(403, "Workspace access is unavailable.");
+    const selectedIds = conversationIds?.length
+      ? [...new Set(conversationIds)]
+      : [];
+    for (const id of selectedIds) {
+      if (
+        !mayReadConversation(store, current, id) ||
+        store.get(current.workspaceId, "conversations", id)?.archived
+      )
+        fail(404, "A selected source is unavailable.");
+    }
+    // Stream IDs and sizes before parsing records; never load the entire transcript library.
+    const records = store.db
+      .prepare(
+        `SELECT id,length(CAST(data AS BLOB)) AS bytes FROM resources
+        WHERE workspace_id=? AND kind='conversations'
+        ${selectedIds.length ? `AND id IN (${selectedIds.map(() => "?").join(",")})` : ""}
+        ORDER BY updated_at DESC, rowid DESC`,
+      )
+      .iterate(current.workspaceId, ...selectedIds);
+    const words = [
+      ...new Set(question.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []),
+    ]
+      .filter(
+        (word) =>
+          ![
+            "the",
+            "and",
+            "what",
+            "which",
+            "with",
+            "from",
+            "that",
+            "this",
+            "does",
+            "have",
+            "about",
+            "how",
+            "are",
+            "was",
+            "for",
+            "tell",
+            "across",
+          ].includes(word),
+      )
+      .slice(0, 20);
+    const ranked: Array<Citation & { score: number }> = [];
+    // Bound total parsed source data, including rows that fail authorization.
+    let remaining = 50_000_000,
+      scanned = 0,
+      limited = false;
+    for (const row of records) {
+      if (++scanned > 2000 || Number(row.bytes) > remaining) {
+        limited = true;
+        break;
+      }
+      remaining -= Number(row.bytes);
+      const id = String(row.id);
+      if (!mayReadConversation(store, current, id)) continue;
+      const item = store.get(current.workspaceId, "conversations", id);
+      if (!item || item.archived) continue;
+      const transcript = String(item.transcript || "").slice(0, 800_000);
+      if (!transcript.length) continue;
+      const noteEvidence: Array<Citation & { score: number }> = [];
+      for (const match of transcript.matchAll(/[^\n.!?]+[.!?]?/g)) {
+        const raw = match[0],
+          text = raw.trim();
+        if (!text) continue;
+        const start = (match.index || 0) + raw.indexOf(text);
+        const clipped = text.slice(0, 900);
+        const searchable = clipped.toLowerCase();
+        const score = words.reduce(
+          (sum, word) => sum + (searchable.includes(word) ? 1 : 0),
+          0,
+        );
+        if (score) {
+          noteEvidence.push({
+            conversationId: item.id,
+            title: String(item.title || "Conversation"),
+            text: clipped,
+            start,
+            end: start + clipped.length,
+            score,
+          });
+          noteEvidence.sort((a, b) => b.score - a.score);
+          if (noteEvidence.length > 3) noteEvidence.pop();
+        }
+      }
+      ranked.push(...noteEvidence);
+      ranked.sort((a, b) => b.score - a.score);
+      ranked.splice(12);
+    }
+    const citations = ranked.map(({ score, ...citation }) => citation);
+
+    let mode = "extractive",
+      answer = citations.length
+        ? `Relevant conversation excerpts:\n\n${citations.map((c, i) => `[${i + 1}] ${c.title}: ${c.text}`).join("\n\n")}`
+        : "No matching excerpts were found in the conversations you can access. Try a specific phrase from a transcript.";
+    if (citations.length && options.complete) {
+      const generated = await options.complete(current, citations, question);
+      if (generated) {
+        if (generated.length > 20_000)
+          fail(
+            502,
+            "The provider answer exceeded the supported length. Please ask a narrower question.",
+          );
+        answer = generated;
+        mode = options.mode || "openai";
+      }
+    }
+    if (limited)
+      answer +=
+        "\n\nSearch reached its workspace limit. Select a specific source conversation to search older material.";
+
+    const result = { answer, citations, mode };
+    if (!validateAnswer(current, result))
+      fail(409, "Source access changed while answering. Please try again.");
+    return result;
+  }
+  return { answer, validateAnswer };
+}
+
 /** Answers belong to one user in one workspace. Source permissions are checked on every read. */
 export function registerKnowledge(
   app: Express,
   store: Store,
-  options: Options = {},
+  options: KnowledgeOptions = {},
+  engine = createKnowledgeEngine(store, options),
 ) {
   store.db.exec(`CREATE TABLE IF NOT EXISTS assistant_threads (
     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), user_id TEXT NOT NULL REFERENCES users(id),
@@ -50,22 +259,15 @@ export function registerKnowledge(
       )
       .get(id, user.workspaceId, user.id) ||
     fail(404, "Conversation not found.");
-  const readable = (user: User, citation: Citation) => {
-    if (!mayReadConversation(store, user, citation.conversationId))
-      return false;
-    const item = store.get(
-      user.workspaceId,
-      "conversations",
-      citation.conversationId,
-    );
-    return (
-      String(item?.transcript || "").slice(citation.start, citation.end) ===
-      citation.text
-    );
-  };
   const view = (user: User, row: Record<string, unknown>) => {
     const citations = JSON.parse(String(row.citations)) as Citation[];
-    if (!citations.every((c) => readable(user, c)))
+    if (
+      !engine.validateAnswer(user, {
+        answer: row.answer,
+        citations,
+        mode: row.mode,
+      })
+    )
       return {
         id: row.id,
         question: row.question,
@@ -169,125 +371,14 @@ export function registerKnowledge(
         ) >= 100
       )
         fail(400, "Delete an old conversation before starting another.");
-      const selectedIds = input.conversationIds?.length
-        ? [...new Set(input.conversationIds)]
-        : [];
-      for (const id of selectedIds) {
-        if (
-          !mayReadConversation(store, current, id) ||
-          store.get(current.workspaceId, "conversations", id)?.archived
-        )
-          fail(404, "A selected source is unavailable.");
-      }
-      // Stream IDs and sizes before parsing records; never load the entire transcript library.
-      const records = store.db
-        .prepare(
-          `SELECT id,length(CAST(data AS BLOB)) AS bytes FROM resources
-        WHERE workspace_id=? AND kind='conversations'
-        ${selectedIds.length ? `AND id IN (${selectedIds.map(() => "?").join(",")})` : ""}
-        ORDER BY updated_at DESC, rowid DESC`,
-        )
-        .iterate(current.workspaceId, ...selectedIds);
-      const words = [
-        ...new Set(
-          input.question.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [],
-        ),
-      ]
-        .filter(
-          (word) =>
-            ![
-              "the",
-              "and",
-              "what",
-              "which",
-              "with",
-              "from",
-              "that",
-              "this",
-              "does",
-              "have",
-              "about",
-              "how",
-              "are",
-              "was",
-              "for",
-              "tell",
-              "across",
-            ].includes(word),
-        )
-        .slice(0, 20);
-      const ranked: Array<Citation & { score: number }> = [];
-      // Bound total parsed source data, including rows that fail authorization.
-      let remaining = 50_000_000,
-        scanned = 0,
-        limited = false;
-      for (const row of records) {
-        if (++scanned > 2000 || Number(row.bytes) > remaining) {
-          limited = true;
-          break;
-        }
-        remaining -= Number(row.bytes);
-        const id = String(row.id);
-        if (!mayReadConversation(store, current, id)) continue;
-        const item = store.get(current.workspaceId, "conversations", id);
-        if (!item || item.archived) continue;
-        const transcript = String(item.transcript || "").slice(0, 800_000);
-        if (!transcript.length) continue;
-        const noteEvidence: Array<Citation & { score: number }> = [];
-        for (const match of transcript.matchAll(/[^\n.!?]+[.!?]?/g)) {
-          const raw = match[0],
-            text = raw.trim();
-          if (!text) continue;
-          const start = (match.index || 0) + raw.indexOf(text);
-          const clipped = text.slice(0, 900);
-          const searchable = clipped.toLowerCase();
-          const score = words.reduce(
-            (sum, word) => sum + (searchable.includes(word) ? 1 : 0),
-            0,
-          );
-          if (score) {
-            noteEvidence.push({
-              conversationId: item.id,
-              title: String(item.title || "Conversation"),
-              text: clipped,
-              start,
-              end: start + clipped.length,
-              score,
-            });
-            noteEvidence.sort((a, b) => b.score - a.score);
-            if (noteEvidence.length > 3) noteEvidence.pop();
-          }
-        }
-        ranked.push(...noteEvidence);
-        ranked.sort((a, b) => b.score - a.score);
-        ranked.splice(12);
-      }
-      const citations = ranked.map(({ score, ...citation }) => citation);
       inFlight.add(key);
       try {
-        let mode = "extractive",
-          answer = citations.length
-            ? `Relevant conversation excerpts:\n\n${citations.map((c, i) => `[${i + 1}] ${c.title}: ${c.text}`).join("\n\n")}`
-            : "No matching excerpts were found in the conversations you can access. Try a specific phrase from a transcript.";
-        if (citations.length && options.complete) {
-          const generated = await options.complete(
-            current,
-            citations,
-            input.question,
-          );
-          if (generated) {
-            if (generated.length > 20_000)
-              fail(
-                502,
-                "The provider answer exceeded the supported length. Please ask a narrower question.",
-              );
-            answer = generated;
-            mode = "openai";
-          }
-        }
-        if (limited)
-          answer +=
-            "\n\nSearch reached its workspace limit. Select a specific source conversation to search older material.";
+        const result = await engine.answer(
+          current,
+          input.question,
+          input.conversationIds,
+        );
+        const { answer, citations, mode } = result;
         // A provider call can outlive membership, note, or permission changes.
         const active = sessionUser(store, req);
         if (
@@ -296,17 +387,7 @@ export function registerKnowledge(
           active.workspaceId !== current.workspaceId
         )
           fail(409, "Your session or workspace changed. Please try again.");
-        const membership = store.db
-          .prepare(
-            "SELECT role FROM memberships WHERE workspace_id=? AND user_id=? AND status='active'",
-          )
-          .get(current.workspaceId, current.id);
-        if (
-          !membership ||
-          !citations.every((c) =>
-            readable({ ...current, role: String(membership.role) }, c),
-          )
-        )
+        if (!engine.validateAnswer(active!, result))
           fail(409, "Source access changed while answering. Please try again.");
         const id = existing ? String(existing.id) : randomUUID(),
           createdAt = new Date().toISOString(),
