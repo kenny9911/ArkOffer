@@ -31,6 +31,8 @@ Each review check is bound to the exact displayed job version. Editing the job i
 
 The full browser suite exposed a selection race when inserting a link immediately after formatting text. An animation-frame callback could restore an obsolete selection and replace the greeting. Selection now restores with the committed textarea value before another keyboard action. The regression test deliberately delays animation callbacks and verifies that the formatted greeting and new link both survive.
 
+The first GitHub run also exposed an ambiguous Sourcing test selector: before setup finished loading, it could click the navigation tab instead of the prompt control. Prompt choices now have a named accessible group, and the regression test scopes its interaction to that group while deliberately delaying setup. Prompt validation and its assertions remain intact.
+
 ## Source inspection and REA evidence
 
 The signed-in source application-review route still displayed an ATS connection gate. It was observed and dismissed without connecting an account or creating source records. The source's protected application workflow was therefore not available for runtime comparison.

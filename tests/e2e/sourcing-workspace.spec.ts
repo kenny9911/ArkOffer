@@ -229,11 +229,36 @@ test("guided Sourcing Prompt keeps its generated text editable before planning",
   baseURL,
 }) => {
   await signup(page, baseURL);
+  let releaseSetup!: () => void;
+  let requestedSetup!: () => void;
+  const pendingSetup = new Promise<void>((resolve) => {
+    releaseSetup = resolve;
+  });
+  const setupRequested = new Promise<void>((resolve) => {
+    requestedSetup = resolve;
+  });
+  await page.route("**/api/sourcing", async (route) => {
+    requestedSetup();
+    await pendingSetup;
+    await route.continue();
+  });
   await page.goto("/app/sourcing");
-  await page
-    .getByRole("button", { name: "Sourcing", exact: true })
-    .last()
-    .click();
+  const prompts = page.getByRole("group", {
+    name: "Agentic prompts",
+    exact: true,
+  });
+  try {
+    await setupRequested;
+    // The navigation tab exists before the identically named prompt button.
+    // A delayed setup must not let the test mistake that tab for the template.
+    await expect(
+      page.getByRole("button", { name: "Sourcing", exact: true }),
+    ).toHaveCount(1);
+    await expect(prompts).toHaveCount(0);
+  } finally {
+    releaseSetup();
+  }
+  await prompts.getByRole("button", { name: "Sourcing", exact: true }).click();
   const modal = page.getByRole("dialog", {
     name: "Sourcing Prompt",
     exact: true,
