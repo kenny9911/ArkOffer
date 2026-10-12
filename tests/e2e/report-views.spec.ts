@@ -27,40 +27,43 @@ test("private report definitions persist while unconfigured extraction remains g
   expect(created.ok(), await created.text()).toBeTruthy();
   await page.goto("/app/reports");
   const reports = page.getByRole("region", { name: "AI report views" });
+  await reports.getByRole("link", { name: "New report", exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/reports\/new$/);
+  await reports.getByRole("tab", { name: "Info", exact: true }).click();
   await expect(
     reports.getByText("Text AI is not enabled for this workspace"),
   ).toBeVisible();
-  await reports
-    .getByRole("button", { name: "New AI report", exact: true })
-    .click();
   await reports
     .getByLabel("Report name", { exact: true })
     .fill("Leadership evidence");
   await reports
     .getByLabel("What do you want to learn?")
     .fill("What team leadership experience is documented?");
+  await reports.getByRole("button", { name: /^Columns/ }).click();
   await reports.getByLabel("Column 1 name").fill("Leadership example");
   await reports
     .getByLabel("Column 1 extraction instructions")
     .fill(
       "Summarize documented leadership experience with an exact transcript quote.",
     );
-  await reports
-    .getByRole("checkbox", { name: /Engineering leadership conversation/ })
-    .check();
+
   await reports.getByRole("button", { name: "Add AI column" }).click();
   await reports.getByLabel("Column 2 name").fill("Team size");
   await reports.getByLabel("Column 2 type").selectOption("number");
   await reports
     .getByLabel("Column 2 extraction instructions")
     .fill("How many engineers did this person lead? Return null if absent.");
+  await reports.getByRole("button", { name: /^Conversations/ }).click();
+  await reports
+    .getByRole("checkbox", { name: /Engineering leadership conversation/ })
+    .check();
   await expect(
     reports.getByText(
       "1 matching conversations × 2 columns = 2 cells per run.",
     ),
   ).toBeVisible();
   await reports
-    .getByRole("button", { name: "Save report view", exact: true })
+    .getByRole("button", { name: "Save report", exact: true })
     .click();
   await expect(
     reports.getByRole("heading", { name: "Leadership evidence" }),
@@ -69,16 +72,14 @@ test("private report definitions persist while unconfigured extraction remains g
     reports.getByRole("button", { name: "Run extraction", exact: true }),
   ).toBeDisabled();
   await page.reload();
-  await reports
-    .getByRole("button", { name: /Leadership evidence 2 columns/ })
-    .click();
-  await reports.getByRole("button", { name: "Edit view", exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/reports\/[a-f0-9-]+$/);
+  await reports.getByRole("button", { name: /^Columns/ }).click();
   await expect(reports.getByLabel("Column 2 type")).toHaveValue("number");
   await reports
     .getByLabel("Report name", { exact: true })
     .fill("Reviewed leadership evidence");
   await reports
-    .getByRole("button", { name: "Save report view", exact: true })
+    .getByRole("button", { name: "Save report", exact: true })
     .click();
   await expect(
     reports.getByRole("heading", { name: "Reviewed leadership evidence" }),
@@ -90,7 +91,7 @@ test("private report definitions persist while unconfigured extraction remains g
     .getByRole("button", { name: "Confirm delete report view" })
     .click();
   await expect(
-    reports.getByText("No saved AI reports yet.", { exact: false }),
+    reports.getByRole("heading", { name: "Get more from your conversations" }),
   ).toBeVisible();
 });
 
@@ -238,6 +239,7 @@ test("report results expose evidence, distinct human annotations, CSV and cancel
       expect(request.postDataJSON().presentation.groupBy).toBe(null);
       presentationSaved = true;
       view.presentation = request.postDataJSON().presentation;
+      run.aggregation.presentation = view.presentation;
       view.presentationRevision++;
       return route.fulfill({ json: { item: view, runs } });
     }
@@ -265,13 +267,14 @@ test("report results expose evidence, distinct human annotations, CSV and cancel
   await page.goto("/app/reports");
   const reports = page.getByRole("region", { name: "AI report views" });
   await reports
-    .getByRole("button", { name: /Leadership evidence 1 columns/ })
+    .getByRole("link", { name: /Leadership evidence 1 AI columns/ })
     .click();
   await expect(
     reports
       .locator(".ai-report-value")
       .filter({ hasText: "Led four engineers" }),
   ).toBeVisible();
+  await reports.getByRole("tab", { name: "Charts", exact: true }).click();
   await expect(
     reports.getByRole("img", { name: /Grouped report bar chart/ }),
   ).toBeVisible();
@@ -303,6 +306,13 @@ test("report results expose evidence, distinct human annotations, CSV and cancel
   ).toBeVisible();
   expect(presentationSaved).toBeTruthy();
   await reports.screenshot({ path: testInfo.outputPath("report-chart.png") });
+  await reports
+    .getByRole("combobox", { name: "Display", exact: true })
+    .selectOption("line");
+  await reports.getByRole("button", { name: "Save presentation" }).click();
+  await expect(
+    reports.getByRole("img", { name: /Grouped report line chart/ }),
+  ).toBeVisible();
   await reports.getByText("Review source quote", { exact: true }).click();
   await expect(
     reports.getByText("Candidate: I led a team of four engineers.", {
@@ -328,6 +338,7 @@ test("report results expose evidence, distinct human annotations, CSV and cancel
     "href",
     "/api/report-views/synthetic-view/runs/synthetic-run/export.csv",
   );
+  await reports.getByRole("tab", { name: "Info", exact: true }).click();
   await expect(
     reports.getByRole("button", { name: "Run extraction again" }),
   ).toBeDisabled();
@@ -432,13 +443,12 @@ test("report agent proposals survive response retries, protect editor changes an
   });
   await page.goto("/app/reports");
   const reports = page.getByRole("region", { name: "AI report views" });
-  await reports
-    .getByRole("button", { name: "New AI report", exact: true })
-    .click();
+  await reports.getByRole("link", { name: "New report", exact: true }).click();
+  await reports.getByRole("button", { name: /^Conversations/ }).click();
   await reports
     .getByRole("checkbox", { name: /Synthetic engineering interview/ })
     .check();
-  await reports.getByRole("button", { name: "Draft report with AI" }).click();
+  await reports.getByRole("tab", { name: "Agent", exact: true }).click();
   await reports.getByLabel("Report brief").fill(proposal.brief);
   await reports
     .getByRole("checkbox", { name: /I agree to send this brief/ })
@@ -456,9 +466,11 @@ test("report agent proposals survive response retries, protect editor changes an
     reports.getByRole("heading", { name: "Team sizes", exact: true }),
   ).toBeVisible();
   expect(new Set(requestIds).size).toBe(1);
+  await reports.getByRole("tab", { name: "Info", exact: true }).click();
   await reports
     .getByLabel("Report name", { exact: true })
     .fill("Unsaved manual edit");
+  await reports.getByRole("tab", { name: "Agent", exact: true }).click();
   await reports.getByRole("button", { name: "Use proposal in editor" }).click();
   await expect(reports.getByRole("alert")).toContainText("The editor changed");
   expect(applies).toBe(0);
@@ -472,7 +484,7 @@ test("report agent proposals survive response retries, protect editor changes an
     (await (await page.request.get("/api/report-views")).json()).items,
   ).toHaveLength(0);
   await reports
-    .getByRole("button", { name: "Save report view", exact: true })
+    .getByRole("button", { name: "Save report", exact: true })
     .click();
   await expect(
     reports.getByRole("heading", { name: "Team sizes", exact: true }),
@@ -484,6 +496,7 @@ test("report agent proposals survive response retries, protect editor changes an
     (await (await page.request.get(`/api/report-views/${saved.id}`)).json())
       .runs,
   ).toHaveLength(0);
+  await reports.getByRole("tab", { name: "Charts", exact: true }).click();
   await reports
     .getByRole("combobox", { name: "Display", exact: true })
     .selectOption("bar");
@@ -495,7 +508,7 @@ test("report agent proposals survive response retries, protect editor changes an
     reports.getByText("Presentation saved. No extraction was started."),
   ).toBeVisible();
   await page.reload();
-  await reports.getByRole("button", { name: /Team sizes 1 columns/ }).click();
+  await reports.getByRole("tab", { name: "Charts", exact: true }).click();
   await expect(
     reports.getByRole("combobox", { name: "Display", exact: true }),
   ).toHaveValue("bar");
@@ -508,4 +521,247 @@ test("report agent proposals survive response retries, protect editor changes an
   expect(detail.item.revision).toBe(1);
   expect(detail.item.presentationRevision).toBe(2);
   expect(detail.runs).toHaveLength(0);
+});
+
+test("report workspace filters, favorites, duplication and routing persist without extraction", async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  const origin = new URL(baseURL!).origin;
+  const signup = await page.request.post("/api/auth/signup", {
+    headers: { Origin: origin },
+    data: {
+      name: "Report Workspace Reviewer",
+      email: `report-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
+      password: "LocalTestPass987!",
+      workspaceName: "Report workspace tests",
+      seedDemo: false,
+    },
+  });
+  expect(signup.ok()).toBeTruthy();
+  const sources = [];
+  for (const item of [
+    {
+      title: "Engineering conversation",
+      candidate: "Alex Example",
+      interviewer: "Casey Reviewer",
+      duration: 32,
+      date: "2026-10-05T12:00:00Z",
+      status: "ready",
+    },
+    {
+      title: "Design conversation",
+      candidate: "Jordan Example",
+      interviewer: "Taylor Reviewer",
+      duration: 60,
+      date: "2026-09-01T12:00:00Z",
+      status: "upcoming",
+    },
+  ]) {
+    const response = await page.request.post("/api/conversations", {
+      headers: { Origin: origin },
+      data: {
+        ...item,
+        transcript: "Candidate: I led four engineers.",
+        archived: false,
+      },
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    sources.push((await response.json()).item);
+  }
+  await page.goto("/app/reports/new");
+  const reports = page.getByRole("region", { name: "AI report views" });
+  await expect(
+    reports.getByRole("tab", { name: "Agent", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    reports.getByRole("heading", { name: "Start filtering" }),
+  ).toBeVisible();
+  await reports.getByRole("tab", { name: "Info", exact: true }).click();
+  await reports
+    .getByLabel("Report name", { exact: true })
+    .fill("Engineering insights");
+  await reports
+    .getByLabel("What do you want to learn?")
+    .fill("What engineering experience is documented?");
+  await reports.getByRole("button", { name: /^Columns/ }).click();
+  await reports.getByLabel("Column 1 name").fill("Experience");
+  await reports
+    .getByLabel("Column 1 extraction instructions")
+    .fill("Summarize documented engineering experience.");
+  await reports.getByRole("button", { name: /^Conversations/ }).click();
+  await reports
+    .getByRole("checkbox", { name: /Engineering conversation/ })
+    .check();
+  await reports.getByRole("checkbox", { name: /Design conversation/ }).check();
+  await reports.getByRole("button", { name: /^Filter/ }).click();
+  await reports.getByLabel("Candidate contains").fill("Alex");
+  await reports.getByLabel("Interviewer contains").fill("Casey");
+  await reports.getByLabel("Date field").selectOption("conversation");
+  await reports.getByLabel("On or after").fill("2026-10-01");
+  await reports.getByLabel("On or before").fill("2026-10-31");
+  await reports.getByLabel("Minimum duration (minutes)").fill("20");
+  await reports.getByLabel("Maximum duration (minutes)").fill("40");
+  await reports
+    .getByRole("combobox", { name: "Status", exact: true })
+    .selectOption("ready");
+  await expect(
+    reports.getByRole("table", { name: "Conversation preview" }),
+  ).toContainText("Engineering conversation");
+  await expect(
+    reports.getByRole("table", { name: "Conversation preview" }),
+  ).not.toContainText("Design conversation");
+  await reports
+    .getByRole("button", { name: "Save report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/app\/reports\/[a-f0-9-]+$/);
+  const reportUrl = page.url();
+  await page.reload();
+  await reports.getByRole("button", { name: /^Filter/ }).click();
+  await expect(reports.getByLabel("Candidate contains")).toHaveValue("Alex");
+  await expect(reports.getByLabel("Maximum duration (minutes)")).toHaveValue(
+    "40",
+  );
+  await reports.getByRole("button", { name: "Close report controls" }).click();
+  await reports
+    .getByRole("button", { name: "Add to favorites", exact: true })
+    .click();
+  await expect(reports.getByText("Report added to favorites.")).toBeVisible();
+  await reports.screenshot({ path: testInfo.outputPath("report-builder.png") });
+  await reports.getByRole("link", { name: "Reports", exact: true }).click();
+  await reports.getByLabel("Report list filter").selectOption("favorites");
+  await expect(
+    reports.getByRole("link", { name: /Engineering insights/ }),
+  ).toBeVisible();
+  await reports.getByLabel("Search reports").fill("not found");
+  await expect(reports.getByText("No reports match your search")).toBeVisible();
+  await reports.getByLabel("Search reports").clear();
+  await reports.screenshot({ path: testInfo.outputPath("report-list.png") });
+  await reports.getByRole("link", { name: /Engineering insights/ }).click();
+  await reports
+    .getByRole("button", { name: "Duplicate report", exact: true })
+    .click();
+  await expect(
+    reports.getByRole("heading", {
+      name: "Engineering insights (copy)",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(page.url()).not.toBe(reportUrl);
+  const index = await (await page.request.get("/api/report-views")).json();
+  expect(index.items).toHaveLength(2);
+  for (const view of index.items)
+    expect(
+      (await (await page.request.get(`/api/report-views/${view.id}`)).json())
+        .runs,
+    ).toHaveLength(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(
+    reports.getByRole("heading", {
+      name: "Engineering insights (copy)",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".topbar")).toHaveCount(1);
+  await expect(reports.locator(".reports-topbar")).toHaveCount(1);
+  await expect(
+    reports.getByRole("tab", { name: "Info", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    path: testInfo.outputPath("report-builder-mobile.png"),
+    fullPage: true,
+  });
+});
+
+test("report editing keeps its original revision when a refresh or favorite returns a newer definition", async ({
+  page,
+  baseURL,
+}) => {
+  const headers = { Origin: new URL(baseURL!).origin };
+  const signup = await page.request.post("/api/auth/signup", {
+    headers,
+    data: {
+      name: "Concurrent Report Editor",
+      email: `report-revision-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
+      password: "LocalTestPass987!",
+      workspaceName: "Report concurrency tests",
+      seedDemo: false,
+    },
+  });
+  expect(signup.ok()).toBeTruthy();
+  const source = (
+    await (
+      await page.request.post("/api/conversations", {
+        headers,
+        data: {
+          title: "Synthetic conversation",
+          transcript: "A documented example.",
+          archived: false,
+        },
+      })
+    ).json()
+  ).item;
+  const definition = {
+    name: "Original report",
+    question: "What examples are documented?",
+    sourceIds: [source.id],
+    columns: [
+      {
+        id: "example",
+        name: "Example",
+        instruction: "Summarize the documented example.",
+        type: "text",
+      },
+    ],
+    filters: { title: "", from: "", to: "" },
+  };
+  const created = await page.request.post("/api/report-views", {
+    headers,
+    data: definition,
+  });
+  expect(created.ok()).toBeTruthy();
+  const view = (await created.json()).item;
+  await page.goto(`/app/reports/${view.id}`);
+  const reports = page.getByRole("region", { name: "AI report views" });
+  await reports
+    .getByLabel("Report name", { exact: true })
+    .fill("My unsaved change");
+  const newer = await page.request.patch(`/api/report-views/${view.id}`, {
+    headers,
+    data: {
+      revision: 1,
+      definition: { ...definition, name: "Saved in another tab" },
+    },
+  });
+  expect(newer.ok()).toBeTruthy();
+  await reports
+    .getByRole("button", { name: "Add to favorites", exact: true })
+    .click();
+  await expect(
+    reports.getByRole("heading", { name: "Saved in another tab", exact: true }),
+  ).toBeVisible();
+  await expect(reports.getByLabel("Report name", { exact: true })).toHaveValue(
+    "My unsaved change",
+  );
+  await reports
+    .getByRole("button", { name: "Save report", exact: true })
+    .click();
+  await expect(reports.getByRole("alert")).toContainText(
+    "The report view changed",
+  );
+  const saved = (
+    await (await page.request.get(`/api/report-views/${view.id}`)).json()
+  ).item;
+  expect(saved.name).toBe("Saved in another tab");
+  expect(saved.revision).toBe(2);
+  await reports.getByRole("button", { name: "Discard changes" }).click();
+  await expect(reports.getByLabel("Report name", { exact: true })).toHaveValue(
+    "Saved in another tab",
+  );
 });

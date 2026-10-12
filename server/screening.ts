@@ -3,6 +3,8 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { hashToken, sessionUser } from "./auth.js";
 import type { Store } from "./db.js";
+import { screeningMessage } from "../shared/screening.js";
+import { screeningConfigSchema } from "../shared/screening-schema.js";
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 const questionSchema = z
@@ -11,6 +13,8 @@ const questionSchema = z
     type: z.enum(["text", "yes-no", "multiple-choice"]),
     options: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
     required: z.boolean().default(true),
+    followUp: z.boolean().optional(),
+    sectionTitle: z.string().max(120).optional(),
   })
   .superRefine((question, context) => {
     if (
@@ -69,6 +73,12 @@ type Snapshot = {
   description: string;
   workspaceName: string;
   questions: Question[];
+  setup?: {
+    welcomeMessage: string;
+    completionMessage: string;
+    language: string;
+    voice: string;
+  };
 };
 type Publication = {
   id: string;
@@ -175,6 +185,10 @@ export function registerScreening(app: Express, store: Store) {
     "/api/screenings/:id/publish",
     route((req, res) => {
       const { user, screening } = authorize(req, true);
+      const config =
+        screening.screeningConfig === undefined
+          ? undefined
+          : screeningConfigSchema.parse(screening.screeningConfig);
       const questions = questionsSchema
         .parse(screening.questions)
         .map((question) => ({
@@ -195,6 +209,23 @@ export function registerScreening(app: Express, store: Store) {
           .parse(screening.description || ""),
         workspaceName: user.workspaceName,
         questions,
+        ...(config
+          ? {
+              setup: {
+                ...config.setup,
+                welcomeMessage: screeningMessage(
+                  config.setup.welcomeMessage,
+                  String(screening.title || screening.name),
+                  user.workspaceName,
+                ),
+                completionMessage: screeningMessage(
+                  config.setup.completionMessage,
+                  String(screening.title || screening.name),
+                  user.workspaceName,
+                ),
+              },
+            }
+          : {}),
       };
       if (Buffer.byteLength(JSON.stringify(snapshot)) > 150_000)
         return fail(413, "The questionnaire is too large to publish.");
@@ -211,7 +242,9 @@ export function registerScreening(app: Express, store: Store) {
       const token = randomBytes(32).toString("hex");
       const id = randomUUID(),
         createdAt = new Date().toISOString(),
-        expiresAt = Date.now() + WEEK;
+        expiresAt =
+          Date.now() +
+          (config ? config.outreach.deadlineDays * 86400000 : WEEK);
       store.db
         .prepare(
           "INSERT INTO screening_publications (id, screening_id, workspace_id, token_hash, snapshot, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

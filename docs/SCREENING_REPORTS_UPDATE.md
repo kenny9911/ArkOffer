@@ -1,0 +1,69 @@
+# Screening and Reports workspace update — 13 October 2026
+
+This update replaces ArkOffer’s modal screening workflow and stacked report/dashboard page with routed workspaces informed by a fresh Metaview inspection. It implements working local controls and persistent APIs, but **does not establish complete Metaview parity**. The remaining gaps are listed below and in [PARITY.md](PARITY.md).
+
+## What the source evidence establishes
+
+Two separate methods informed this work:
+
+1. **Direct signed-in observation in the Codex browser.** The screening creation page, a builder, its setup/interview/context/outreach areas, and report creation controls were inspected. One fictional, unpublished **Senior TypeScript Engineer** screening draft was created to reveal the source builder. No candidate invitations, messages, source publication or account connections were made. Reports showed a full-page conversation canvas, filtering/grouping/column controls and an Info/Agent/Charts sidebar. Info exposed properties and actions; chart creation exposed metric and display choices. These observations establish visible behavior in this account, not every account entitlement or backend contract.
+2. **Static REA analysis of public shipped JavaScript.** The public `/screening/new` HTML disclosed `/static/js/manifest-d51ed03e.js`. Focused route assets and explicitly imported modules were downloaded as inert text. They were parsed and inspected without executing their bootstrap code or calling Metaview’s authenticated APIs. The static evidence describes UI structure, schema declarations and client requests; graph coverage is partial and imports remain unresolved.
+
+| Public asset set                    | REA parent evidence                                                   | Summary view                                                          | Container SHA-256                                                  |
+| ----------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Five Screening/Reports route assets | `ev_8a472717cb7a89c652626fcd177423e39cb50755b8f1494f9fb84ab762a08f5f` | `ev_b0a75cf0982727f5f75cf5dcf802a21c29d152f67df961fd1c7eca4084d98fde` | `47f1f23e45e93555c4c6cae2665ae76156a80bcc458b1cad1aae3e47281e3784` |
+| Four Reports/shared imports         | `ev_2bb01f36f04d50a1e07e7b636c13a0a8b6757da30ef79aa78ef098e94d9c7334` | `ev_7f0763aa24ccf2fe86e6c7681d8ba6aea10eed9ada25e76f100887de44295039` | `f43045fdc09efae7d708d74d7b4600593431974913dc7cef6c7355648483912b` |
+| Two Screening creation imports      | `ev_1165202a6408c8e57d9007462611d6c9541fc5b39182c7ef636d4ecbd1520701` | `ev_fc5a24a72a6cd76c1292430e4db6e8070c9ad7ea4792a1e985cc7940ddf87883` | `79d9c1b6953cdda8cc3c4fd61051fdfac7e60b1e9189b0f5389d0ac1cb8c3bf9` |
+
+All eleven files parsed without parse errors. The route set contains 489,835 bytes and 24,848 semantic unknowns; the Reports/shared set contains 626,356 bytes and 4,784 unknowns. Graph/result ceilings limited both sets. The creation imports contain 39,788 bytes, with a complete application inventory but unknown semantic coverage and 2,581 unresolved relationships. No evidence item is an authenticated network trace or a proof of backend equivalence. Detailed local inspection notes and downloaded assets remain in ignored review storage; no source bundles, cookies or account records are committed.
+
+Static source declarations reveal broader features than the inspected account could establish end to end: structured screening-plan suggestions, video/roleplay/code questions, ATS stages, outreach templates, report subscriptions/sharing and richer charts. These inform the gap list; their declaration does not demonstrate that ArkOffer implements them.
+
+## Screening implementation
+
+`/app/screening` now opens the saved screening list. `/app/screening/new` presents a role prompt with Build/Send/Review guidance, a compact AI proposal form and a manual creation path. `/app/screening/:id` opens a full-page **Builder/Candidates** workspace. The Builder includes **Setup, Interview, Context and Outreach** tabs plus Preview/Agent panels.
+
+The editor persists section titles and private goals; text, yes/no and multiple-choice questions; required and follow-up flags; private rubrics; question/section duplication, reordering and deletion; role/company context; welcome/completion messages; language and a local browser narration voice; and a candidate-link deadline. Text context import fills an editable field. Preview does not publish a link. Incomplete questions can be retained in a draft, while publication validates prompts and distinct choice options.
+
+A strict versioned configuration lives on the workspace screening record. It allows 1–20 sections and at most 50 questions, unique section/question UUIDs and a 150 KB total record. The dedicated save endpoint compares the original `updatedAt` revision and returns a conflict instead of overwriting another edit. Legacy questionnaires are adapted on read and remain compatible with their existing public links. The full contract is in [server/API.md](../server/API.md#screening-workspaces).
+
+AI drafting uses explicit consent, the existing provider/model and a **120-second controller and adapter deadline**. The adapter requests a streamed response but exposes a proposal only after the complete structured output has been parsed and validated. The output cap remains 6,000 tokens, with existing request identity, author isolation, quotas, cancellation and stale-source checks. Applying a proposal fills the editor; saving the workspace draft and publishing a candidate link are separate actions. The longer deadline does not guarantee provider availability and does not change the selected model or introduce automatic paid retries.
+
+Candidate links use immutable snapshots and hashed tokens, with a configurable **1–30 day expiry, default seven**. A snapshot allowlists the public title/description, questions and section titles, follow-up flags, welcome/completion messages and narration preferences. Private section goals, rubrics and role/company context are excluded. Template messages resolve `{{screening_title}}` and `{{company_name}}` before publication. Existing published snapshots remain unchanged after later draft edits.
+
+Candidate narration uses available local browser voices. Locale settings do not translate the questions or provide a multilingual interview agent. Optional recorded answers retain the existing consent, bounded transcription, correction and submission workflow. A published question with follow-up disabled does not call the clarification model. Raw recordings are not retained.
+
+The Candidates tab displays actual submitted responses, status/search filters, candidate-link states, explicit revocation, CSV and a response review panel. Workspace members may save shared review notes and manually choose **Unreviewed, Reviewed, Progressed or Rejected**. Review writes are revision checked, record the human reviewer and update time, and are excluded from public candidate APIs. These are local human review annotations: they do not change ATS stages, send rejection messages, rank applicants or automatically decide hiring outcomes.
+
+## Reports implementation
+
+`/app/reports` is a report directory with search, sorting, owner labels, recent/favorite views and duplication. `/app/reports/new` and `/app/reports/:id` open a full-page conversation canvas with **Filter, Group, Columns and Conversations** controls and a right-side **Info/Agent/Charts** panel. Existing aggregate recruiting analytics remain available at `/app/reports/analytics`.
+
+Info edits the title and description and shows creation/owner metadata. Favorites persist privately; duplication creates a separate definition without copying extracted results. The Agent produces reviewable definition proposals using the existing consent and replay guards. Switching between Info and Agent retains the pending request identity and the original editor context. Applying a proposal preserves manually selected source IDs, and saving still requires a separate action.
+
+The author selects up to 20 accessible conversations and edits/reorders up to five text, number, yes/no or currency AI columns. A preview shows the actual available conversation metadata. Server-enforced filters cover title/candidate/interviewer substrings, status, creation or conversation date, and minimum/maximum duration. Missing date/duration values do not silently match; calendar-import duration can be the planned duration. No talk-time, lateness or other measurement is invented from missing data.
+
+Extraction remains explicitly consented, private to its author/workspace and bounded to 100 cells per run. Existing exact evidence quotes, human annotations, progress/cancellation, historical runs, source-change/access checks and CSV exports remain available. Polling or changing a favorite cannot replace the editor’s original revision and thereby bypass a concurrent-save conflict.
+
+Charts use table, bar or line presentation; column grouping; and count, sum or average calculations. Presentation has its own revision and does not restart extraction. Historical charts use the selected run’s immutable column schema and only currently authorized, unchanged sources. Missing/pending/failed values remain distinct from zero, and currencies are never combined. Line charts connect categories in table order and explicitly do not imply a time series. Grouped values are also available in a table and CSV.
+
+## Remaining source gaps
+
+| Area                          | Still absent or narrower than the source                                                                                                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Screening plan/agent          | Full-plan chat editing with structured accept/dismiss operations; source question formats such as code/roleplay; automatic translation; candidate resume context; PDF/media attachments.                                                                      |
+| Candidate experience          | Real-time voice/video agent, camera/device interview flow, logo and intro-video upload, source voice catalog and synchronized media evidence.                                                                                                                 |
+| Screening operations          | Invitation delivery, reminders, source mailbox configuration, ATS import/stage automation, automated scoring/ranking and source credit entitlements. Human review annotations do not implement those operations.                                              |
+| Report datasets/filters       | General participant identities and measured talk-time/late/overrun metrics; complete source filter/operator grammar; arbitrary predicates over extracted AI columns; list/date AI column types; uncaptured-conversation and source-scale pagination behavior. |
+| Charts                        | Multiple independent charts, stacked bars, calendar axes, rolling averages, thresholds, cover-chart selection and the source calculation catalog.                                                                                                             |
+| Report collaboration/delivery | Shared report-result grants, workspace/public report links, subscriptions, scheduled email or source-style emailed CSV delivery. Current reports remain private and CSV downloads are local.                                                                  |
+
+These gaps are functional boundaries, not hidden behind inactive controls. The reconstruction keeps ArkOffer branding and independent code; it does not reproduce Metaview’s private prompts, models, datasets or backend.
+
+## Validation
+
+Focused Screening and Reports checks and production builds have passed with synthetic accounts/data and mocked provider responses or local persistence. Coverage includes configuration validation, private/public snapshot separation, deadlines, disabled follow-up behavior, report metadata filters/favorites, evidence/annotations/CSV, proposal replay and competing edits. Desktop/mobile captures support layout inspection rather than a claim of pixel equality across all source states.
+
+The complete backend suite passed **317 tests**. The 67-case browser run passed 66 cases and exposed one outdated manual-builder test assumption; that test was corrected to explicitly add its first question. All **18 affected browser cases then passed**, including the corrected preview flow, the new review navigation guard, refreshed desktop/mobile captures and the production build. The other 49 browser cases passed in the full run. Repository formatting passed.
+
+Three synthetic, bounded screening generation requests to the existing configured provider produced validated proposals in about 16–19 seconds. The first two verification harnesses had local save-adapter mistakes after successful generation/apply; the corrected final harness assigned stable question IDs and verified generation → apply → workspace save in about 17 seconds of generation time. No real candidate data, published links or outbound messages were involved. This establishes one exercised model path, not sustained provider reliability or live microphone, outreach, ATS or payment operation. GitHub checks and review remain authoritative for the delivered revision.

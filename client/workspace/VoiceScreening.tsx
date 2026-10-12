@@ -13,6 +13,8 @@ export type VoiceEvidence = { questionId: string; turnId: string };
 type Props = {
   token: string;
   questions: VoiceQuestion[];
+  language?: string;
+  voiceName?: string;
   answers: Record<string, string>;
   onAnswer: (questionId: string, value: string) => void;
   onEvidence: (questionId: string, turnId: string | null) => void;
@@ -93,6 +95,8 @@ export default function VoiceScreening({
   onEvidence,
   onActive,
   onBusy,
+  language,
+  voiceName,
 }: Props) {
   const [providerName, setProviderName] = useState("OpenAI"),
     [clarification, setClarification] = useState(false);
@@ -172,9 +176,18 @@ export default function VoiceScreening({
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(prompt);
     // Prefer a local voice so reading a question does not require a speech service.
-    const local = window.speechSynthesis
+    const voices = window.speechSynthesis
       .getVoices()
-      .find((voice) => voice.localService);
+      .filter((voice) => voice.localService);
+    const matching = voices.filter(
+      (voice) =>
+        !language ||
+        voice.lang
+          .toLowerCase()
+          .startsWith(language.split("-")[0].toLowerCase()),
+    );
+    const local =
+      matching.find((voice) => voice.name === voiceName) || matching[0];
     if (!local) {
       setError(
         "A local spoken voice is not available. You can read the question below.",
@@ -182,6 +195,7 @@ export default function VoiceScreening({
       return;
     }
     utterance.voice = local;
+    utterance.lang = language || local.lang;
     window.speechSynthesis.speak(utterance);
   }
   async function finish(recordingSequence: number) {

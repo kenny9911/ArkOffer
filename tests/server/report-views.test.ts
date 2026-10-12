@@ -1145,3 +1145,161 @@ test("report draft in-flight replays do not buy another request and stale genera
     await f.close();
   }
 });
+
+test("report metadata filters constrain extraction to selected accessible conversations", async () => {
+  const f = await fixture();
+  try {
+    f.change(f.first, {
+      candidate: "Alex Example",
+      interviewer: "Casey Reviewer",
+      date: "2026-10-05T10:00:00Z",
+      duration: 32,
+      status: "ready",
+    });
+    const different = f.note("Another interview");
+    f.change(different, {
+      candidate: "Jordan Example",
+      interviewer: "Taylor Reviewer",
+      date: "2026-09-05T10:00:00Z",
+      duration: 65,
+      status: "upcoming",
+    });
+    const missing = f.note("Missing meeting metadata");
+    const index = await (await f.request()).json();
+    assert.equal(
+      index.sources.find((source: any) => source.id === f.first.id).candidate,
+      "Alex Example",
+    );
+    assert.equal(
+      index.sources.find((source: any) => source.id === missing.id).duration,
+      null,
+    );
+    const view = await f.create(
+      f.definition({
+        sourceIds: [f.first.id, different.id, missing.id],
+        filters: {
+          title: "",
+          from: "2026-10-01",
+          to: "2026-10-31",
+          dateField: "conversation",
+          candidate: "alex",
+          interviewer: "CASEY",
+          status: "ready",
+          durationMin: 20,
+          durationMax: 40,
+        },
+      }),
+    );
+    const run = await f.run(view);
+    assert.equal(run.totalCells, 1);
+    await f.tick();
+    const result = await f.detail(view);
+    assert.deepEqual(
+      result.runs[0].rows.map((row: any) => row.sourceId),
+      [f.first.id],
+    );
+    assert.equal(f.calls.length, 1);
+    assert.equal(
+      (
+        await f.request(
+          "",
+          "POST",
+          f.definition({
+            filters: {
+              title: "",
+              from: "",
+              to: "",
+              durationMin: 60,
+              durationMax: 20,
+            },
+          }),
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await f.request(
+          "",
+          "POST",
+          f.definition({
+            filters: { title: "", from: "", to: "", status: "invented" },
+          }),
+        )
+      ).status,
+      400,
+    );
+    const missingView = await f.create(
+      f.definition({
+        sourceIds: [missing.id],
+        filters: {
+          title: "",
+          from: "",
+          to: "2026-12-31",
+          dateField: "conversation",
+          durationMax: 60,
+        },
+      }),
+    );
+    assert.equal(
+      (
+        await f.request(`/${missingView.id}/runs`, "POST", {
+          consent: true,
+          revision: 1,
+          requestKey: randomUUID(),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(f.calls.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("report favorites persist privately without changing revisions or starting extraction", async () => {
+  const f = await fixture();
+  try {
+    const view = await f.create();
+    assert.equal(view.favorite, false);
+    assert.equal(
+      (
+        await f.request(
+          `/${view.id}/preferences`,
+          "PATCH",
+          { favorite: true },
+          f.member.cookie,
+        )
+      ).status,
+      404,
+    );
+    assert.equal(
+      (
+        await f.request(`/${view.id}/preferences`, "PATCH", {
+          favorite: true,
+          share: true,
+        })
+      ).status,
+      400,
+    );
+    const response = await f.request(`/${view.id}/preferences`, "PATCH", {
+      favorite: true,
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.item.favorite, true);
+    assert.equal(result.item.revision, 1);
+    assert.deepEqual(result.runs, []);
+    assert.equal((await (await f.request()).json()).items[0].favorite, true);
+    assert.equal(
+      (await (await f.request("", "GET", undefined, f.member.cookie)).json())
+        .items.length,
+      0,
+    );
+    await f.request(`/${view.id}/preferences`, "PATCH", { favorite: false });
+    assert.equal((await f.detail(view)).item.favorite, false);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.close();
+  }
+});

@@ -208,7 +208,10 @@ function Workspace() {
           : nav.find((x) => location.pathname.startsWith(x[1]))?.[0] || "Notes";
   const ownHeader =
     location.pathname === "/app/sourcing" ||
-    location.pathname.startsWith("/app/sequences/");
+    location.pathname.startsWith("/app/sequences/") ||
+    location.pathname.startsWith("/app/screening") ||
+    (location.pathname.startsWith("/app/reports") &&
+      location.pathname !== "/app/reports/analytics");
   return (
     <div
       className={`workspace ${collapsed ? "collapsed" : ""} ${mobile ? "mobile-open" : ""}`}
@@ -343,7 +346,9 @@ function Workspace() {
         ) : location.pathname === "/app/fillmore" ? (
           <WorkspaceAssistant />
         ) : nav.some((entry) => entry[1] === location.pathname) ||
-          /^\/app\/sequences\/[^/]+$/.test(location.pathname) ||
+          /^\/app\/(sequences|screening|reports)\/[^/]+$/.test(
+            location.pathname,
+          ) ||
           location.pathname === "/app/candidates" ? (
           <Business
             key={location.pathname}

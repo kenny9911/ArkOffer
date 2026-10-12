@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const presentationSchema = z
   .object({
-    mode: z.enum(["table", "bar"]),
+    mode: z.enum(["table", "bar", "line"]),
     groupBy: z.string().max(64).nullable(),
     operation: z.enum(["count", "sum", "average"]),
     metric: z.string().max(64).nullable(),

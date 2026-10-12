@@ -1,6 +1,6 @@
 import { useState } from "react";
 type Presentation = {
-  mode: "table" | "bar";
+  mode: "table" | "bar" | "line";
   groupBy: string | null;
   operation: "count" | "sum" | "average";
   metric: string | null;
@@ -70,7 +70,7 @@ export default function ReportPresentation({
     );
   return (
     <section className="report-presentation" aria-label="Report presentation">
-      <h4>Presentation</h4>
+      <h4>Visualize your data</h4>
       <p>
         Group existing answers and compare values. Saving presentation does not
         extract again or interrupt an active run.
@@ -89,6 +89,7 @@ export default function ReportPresentation({
           >
             <option value="table">Table</option>
             <option value="bar">Bar chart</option>
+            <option value="line">Line chart</option>
           </select>
         </label>
         <label>
@@ -243,6 +244,74 @@ export default function ReportPresentation({
                 ))}
               </div>
             )}
+            {aggregation.presentation.mode === "line" &&
+              [
+                ...new Set(aggregation.groups.map((group) => group.unit || "")),
+              ].map((unit) => {
+                const groups = aggregation.groups.filter(
+                  (group) =>
+                    (group.unit || "") === unit && group.value !== null,
+                );
+                const min = Math.min(0, ...groups.map((group) => group.value!)),
+                  max = Math.max(1, ...groups.map((group) => group.value!));
+                const x = (i: number) =>
+                    25 + (i * 250) / Math.max(1, groups.length - 1),
+                  y = (value: number) =>
+                    150 - ((value - min) * 125) / (max - min);
+                return (
+                  <div className="report-line-chart" key={unit || "values"}>
+                    <p>{unit || "Values"} · groups in table order</p>
+                    <svg
+                      viewBox="0 0 300 180"
+                      role="img"
+                      aria-label={`Grouped report line chart${unit ? ` in ${unit}` : ""}; exact values in the following table`}
+                    >
+                      <line
+                        x1="25"
+                        y1={y(0)}
+                        x2="275"
+                        y2={y(0)}
+                        stroke="#ddd"
+                      />
+                      <polyline
+                        points={groups
+                          .map((group, i) => `${x(i)},${y(group.value!)}`)
+                          .join(" ")}
+                        fill="none"
+                        stroke="#666"
+                        strokeWidth="2"
+                      />
+                      {groups.map((group, i) => (
+                        <g key={group.key}>
+                          <circle
+                            cx={x(i)}
+                            cy={y(group.value!)}
+                            r="3"
+                            fill="#444"
+                          >
+                            <title>
+                              {group.label}: {group.value} {unit}
+                            </title>
+                          </circle>
+                          <text
+                            x={x(i)}
+                            y="174"
+                            textAnchor="middle"
+                            fontSize="9"
+                            fill="#888"
+                          >
+                            {i + 1}
+                          </text>
+                        </g>
+                      ))}
+                    </svg>
+                    <p className="ai-report-muted">
+                      Points follow the group order below; this does not imply a
+                      time series. Missing values are excluded.
+                    </p>
+                  </div>
+                );
+              })}
             <div className="ai-report-table-scroll">
               <table aria-label="Grouped report values">
                 <thead>

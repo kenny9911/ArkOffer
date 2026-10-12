@@ -281,7 +281,7 @@ export function registerScreeningDrafts(
       try {
         const signal = AbortSignal.any([
           abort.signal,
-          AbortSignal.timeout(45000),
+          AbortSignal.timeout(120000),
         ]);
         const text = await ai.complete(
           [
@@ -293,7 +293,7 @@ export function registerScreeningDrafts(
             { role: "user", content: JSON.stringify(prepared) },
           ],
           true,
-          { signal, maxTokens: 6000 },
+          { signal, maxTokens: 6000, timeoutMs: 120000, stream: true },
         );
         if (signal.aborted)
           fail(409, "Screening drafting was cancelled or timed out.");

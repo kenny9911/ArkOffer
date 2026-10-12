@@ -117,23 +117,24 @@ Repeated UUIDs return their persisted request state (202 while running, otherwis
 
 ## Private AI report views
 
-Definitions, processing runs, values, evidence and annotations are author/workspace scoped and excluded from generic reports and public shares. A definition is `{name,question,sourceIds,columns,filters?}`. Columns are `{id,name,instruction,type}` with a unique 1–64 character alphanumeric/underscore/hyphen ID and `type:"text"|"number"|"boolean"|"currency"`. Filters are `{title?,from?,to?}`: title is a case-insensitive substring; optional `YYYY-MM-DD` dates apply inclusively to the conversation's creation date. The author can enter the schema or explicitly generate and review a proposal using the private draft endpoints below.
+Definitions, processing runs, values, evidence and annotations are author/workspace scoped and excluded from generic reports and public shares. A definition is `{name,question,sourceIds,columns,filters?}`. Columns are `{id,name,instruction,type}` with a unique 1–64 character alphanumeric/underscore/hyphen ID and `type:"text"|"number"|"boolean"|"currency"`. Filters are `{title?,candidate?,interviewer?,status?,dateField?,from?,to?,durationMin?,durationMax?}`. Title/candidate/interviewer are case-insensitive substrings of at most 200 characters. Status is `""|"ready"|"processing"|"upcoming"`; dateField is `"created"|"conversation"` (default created). Optional `YYYY-MM-DD` bounds apply inclusively to that selected date field. Duration bounds are finite numbers from 0 to 10,080 minutes and a reversed range is rejected. Missing values do not match duration or conversation-date filters. The saved duration may be calendar-planned duration; there is no inferred talk-time or late-start metric. The author can enter the schema or explicitly generate and review a proposal using the private draft endpoints below.
 
 - `GET /api/report-views/drafts` → `{available,items}`; `GET /api/report-views/drafts/:id` → `{item}`. Both are author/workspace scoped.
 - `POST /api/report-views/drafts`: `{requestId,brief,consent:true,viewId?,revision?}` → `{item}` (201). Brief is 20–4,000 characters. A bound view requires its current revision. The provider receives only the brief and proposes a name, question, one to five typed columns, supported filters and explanatory notes; no source records are sent. Matching UUIDs reuse the request state; deleted/expired identities cannot generate again.
 - `POST /api/report-views/drafts/:id/apply`: `{confirm:true}` → `{definition,notes,alreadyApplied}`. Returns an editable definition with `sourceIds:[]`; the client preserves manually selected sources. This does not save a view or run extraction. Bound-view changes invalidate the proposal.
 - `DELETE /api/report-views/drafts/:id` → `{ok:true}`. Cancels/removes an owned proposal while preserving request identity/budget records. Draft limits: 15 attempts/user/workspace/hour, 30/workspace/hour, two active requests/workspace and 100 retained drafts/author/workspace; shared 60-second provider deadline.
 
-- `GET /api/report-views` → `{items,sources,setup:{configured,model},limits}`.
+- `GET /api/report-views` → `{items,sources,setup:{configured,model},limits}`. Owned views include `favorite,ownerName,createdAt,updatedAt`; authorized unarchived source metadata includes `candidate,interviewer,date,duration,status` in addition to title, creation time and transcript length. Missing duration is `null`.
 - `POST /api/report-views`: definition → `{item,runs}` (201). Saving a view makes no model request.
 - `GET /api/report-views/:id` → `{item,runs}`; latest 25 runs with progress, typed values, source quotations and truncation metadata.
-- `PATCH /api/report-views/:id`: `{revision,definition}` → `{item,runs}`. Rejects stale revisions and cancels in-progress work for the prior definition.
+- `PATCH /api/report-views/:id`: `{revision,definition}` → `{item,runs}`. Rejects stale revisions and cancels in-progress work for the prior definition. The editor retains its original revision through polling and preference refreshes.
+- `PATCH /api/report-views/:id/preferences`: `{favorite:boolean}` → `{item,runs}`. Strict author/workspace scope; favorite changes neither extraction/presentation revisions nor provider work. Duplication uses a separately saved copy through the existing create endpoint and does not copy extracted results.
 - `DELETE /api/report-views/:id` → `{ok:true}`; aborts processing and removes that view and its retained results. Budget usage remains recorded.
 - `POST /api/report-views/:id/runs`: `{requestKey,revision,consent:true}` → `{item,reused:false}` (202). Matching request keys return the stored run with `reused:true`; mismatched view/revision returns 409. Requires the configured, allowed shared text provider.
 - `POST /api/report-views/:id/runs/:runId/cancel`: `{}` → `{item}`.
 - `PATCH /api/report-views/:id/runs/:runId/cells/:cellId`: `{annotation}` → `{ok:true}`; annotation is at most 4,000 characters. A human annotation does not overwrite the extracted value or evidence.
 - `GET /api/report-views/:id/runs/:runId/export.csv` → permission- and source-checked CSV with formula-injection protection, values, evidence, UTF-16 offsets, annotations and truncation disclosure.
-- `PATCH /api/report-views/:id/presentation`: `{revision,runId?,presentation}` → `{item,runs}`. Presentation is `{mode:"table"|"bar",groupBy:string|null,operation:"count"|"sum"|"average",metric:string|null}`. The independent presentation revision rejects stale edits. An optional owned run selects its immutable column snapshot for validation; otherwise the current definition supplies columns. Saving presentation does not trigger extraction or change its revision.
+- `PATCH /api/report-views/:id/presentation`: `{revision,runId?,presentation}` → `{item,runs}`. Presentation is `{mode:"table"|"bar"|"line",groupBy:string|null,operation:"count"|"sum"|"average",metric:string|null}`. The independent presentation revision rejects stale edits. An optional owned run selects its immutable column snapshot for validation; otherwise the current definition supplies columns. Saving presentation does not trigger extraction or change its revision. Line charts use categorical group order; they do not represent a time-series axis.
 - `GET /api/report-views/:id/runs/:runId/grouped.csv` → source- and permission-checked grouping export with formula-injection protection. Run responses include aggregation of authorized rows under the saved presentation; counts, numeric/currency sums and averages retain currency separation and disclose missing/failed/pending values.
 
 Each run processes up to 20 selected notes × five columns = 100 cells. The provider receives at most 60,000 transcript characters per conversation, with `truncated,includedCharacters,totalCharacters` returned for review. Non-null values require exact transcript quotes. Missing/ambiguous evidence yields `not_documented` and `null`, not a guessed negative. Currency values use `{amount,currency}`. Source title/transcript content and access are rechecked before and after provider work and on reads/exports; unavailable rows return no source title, values or annotations. Run status distinguishes queued/processing/completed outcomes, partial failure, cancellation and interruption.
@@ -275,7 +276,7 @@ Sessions/results/reviews are author/workspace-scoped. Changed/deleted workspace 
 - `POST /api/screening-drafts/:id/apply` requires `{confirm:true}` and returns an editable proposal with questions and private rubrics. No shared screening or candidate link is created.
 - `DELETE /api/screening-drafts/:id` discards the draft and aborts active generation where possible; its paid-request identity and budget remain reserved.
 
-Job fingerprints, session identity and provider access are rechecked after generation and before apply. Limits: 15/user/hour, 30/workspace/hour, two active requests, 100 retained drafts/user, 45-second deadline and 6,000 output tokens. The manual editor saves reviewed questions; publication strips private rubrics from public snapshots.
+Job fingerprints, session identity and provider access are rechecked after generation and before apply. Limits: 15/user/hour, 30/workspace/hour, two active requests, 100 retained drafts/user, a 120-second controller/adapter deadline and 6,000 output tokens. The adapter requests streaming and exposes only a complete, validated proposal; the existing model/provider is unchanged, with no automatic paid retry. The editor saves reviewed questions; publication strips private rubrics/context/goals from public snapshots.
 
 ## Billing
 
@@ -288,15 +289,29 @@ Job fingerprints, session identity and provider access are rechecked after gener
 
 Setup requires allowed workspace IDs, Stripe credentials, recurring price IDs and HTTPS public URL. Browser input cannot select arbitrary provider prices or customers. Subscription tracking does not yet enforce feature/usage entitlements. No live payment is part of the test evidence.
 
+## Screening workspaces
+
+- `GET /api/screening-workspaces` → `{items}`; `GET /api/screening-workspaces/:id` → `{item}`. Both require an active session and use the current workspace.
+- `POST /api/screening-workspaces`: `{title,description,jobId?,screeningConfig}` → `{item}` (201). Job association must resolve in the same workspace. The dedicated create endpoint caps a workspace at 1,000 screenings.
+- `PATCH /api/screening-workspaces/:id`: the same definition plus `{revision}` → `{item}`. Revision is the previously read `updatedAt` string; a mismatch returns 409. The UI retains unsaved edits until the reviewer reloads or discards them.
+
+`screeningConfig` has strict version `1`, `setup:{welcomeMessage,completionMessage,language,voice}`, `context:{role,company}`, `outreach:{deadlineDays}`, and `sections:[{id,title,goal,questions}]`. Messages are at most 5,000 characters; role/company context at most 12,000 each. Supported locale values are `en-US,en-GB,es-ES,fr-FR,de-DE,pt-BR,zh-CN,ja-JP`; voice is a local browser voice name of at most 150 characters. These settings control narration preferences, not automatic translation. `deadlineDays` is an integer from 1–30, default seven in a new configuration.
+
+There are 1–20 sections and at most 50 questions total. Section title is 1–120 characters and private goal is at most 2,000. Questions are `{id,prompt,type,options,required,rubric,followUp}` with UUID identities unique across sections/questions, prompt and private rubric at most 2,000 characters, and up to 20 options of at most 200 characters. Types remain text, yes/no and multiple choice. Incomplete prompts/options may be saved as a draft; publication validates completeness and distinct choices. Entire saved records are capped at 150,000 bytes. Saves retain a flattened question list for existing runtime endpoints. Legacy questionnaires are mapped into the editor on read without rewriting stored data or existing publications.
+
+Saved configuration, section goals and rubrics are hiring-team data. Candidate publication explicitly excludes private goals, role/company context and rubrics. It includes only public title/description/workspace name, validated questions with section titles/follow-up flags, and allowlisted setup messages/language/voice. Messages resolve `{{screening_title}}` and `{{company_name}}` before being frozen in the publication.
+
 ## Published screening
 
-- `POST /api/screenings/:id/publish`: `{}` → a seven-day public questionnaire link with immutable question snapshot.
+- `POST /api/screenings/:id/publish`: `{}` → an immutable questionnaire link expiring after configured `deadlineDays` (1–30; default/legacy seven). Only workspace owners may publish. At most 100 active links per screening; existing publications are not changed by draft edits.
 - Public `GET /api/interviews/:token` → questionnaire details, without prior candidate responses.
 - Public `POST /api/interviews/:token/responses`: `{candidateName,email,consent:true,answers:[{questionId,value}]}` → persisted response receipt. One response per link; identical retries are idempotent.
 - `GET /api/screenings/:id/responses` → workspace-authorized response/publication review.
-- `DELETE /api/screenings/:id/publications/:publicationId` revokes a link.
+- `DELETE /api/screenings/:id/publications/:publicationId` revokes a link; workspace owner required.
+- `GET /api/screenings/:id/reviews` → `{items}` with shared human review records for that screening’s submitted responses.
+- `PATCH /api/screenings/:id/responses/:responseId/review`: `{revision,status,notes}` → `{item}`. An active workspace member must have a response belonging to this screening/workspace. Status is `unreviewed|reviewed|progressed|rejected`; notes are trimmed and at most 10,000 characters. Initial revision is zero; each save increments it and stale writes return 409. Records include response identity, reviewer identity/name and update time; they are never returned by public candidate endpoints.
 
-Question types are text, yes/no and multiple choice. Submission validates required answers against the published snapshot. No voice agent, invitation email or automated hiring score is produced.
+Question types are text, yes/no and multiple choice. Submission validates required answers against the published snapshot. The candidate view uses the frozen welcome/completion copy and narration settings; private configuration and shared review notes remain excluded. Review status is a manually saved local annotation, not an ATS stage change or automated eligibility decision. No real-time voice agent, invitation/rejection email, reminder or automated hiring score is produced.
 
 ## Document extraction boundaries
 
@@ -312,7 +327,7 @@ Libraries were selected against their primary documentation: [unpdf](https://git
 - Public `POST /api/interviews/:token/voice/transcriptions`: multipart `audio` (canonical mono 16 kHz 16-bit PCM WAV), `questionId`, UUID `requestId`, `consent:"true"`, optional `parentTurnId` → transcript and linked `turnId`, optional clarification. At most two minutes, three attempts per question, 60 per publication, 120 per workspace/hour; consent and active funded workspace required. Repeated request IDs return stored results instead of duplicate billing; interrupted attempts fail explicitly. Client disconnect aborts provider I/O.
 - Existing candidate submission accepts optional `voiceEvidence:[{questionId,turnId}]`. The server validates ownership of complete turns and attaches original transcripts/duration/timestamps/candidate-edited flags to owner-visible responses. Browser-supplied provenance is never trusted. Corrected text remains the submitted answer.
 
-Raw recordings are held only while processing. Optional one-question clarification uses the separately configured text model, without scoring or hiring decisions. Written answers remain available when audio is disabled. Detailed provider setup and retention boundaries are in [RECONSTRUCTION.md](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+Raw recordings are held only while processing. Optional one-question clarification uses the separately configured text model, without scoring or hiring decisions; a published `followUp:false` disables that model call. Missing local narration voices leave written questions available. Written answers remain available when audio is disabled. Detailed provider setup and retention boundaries are in [RECONSTRUCTION.md](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
 
 ## Candidate enrichment
 

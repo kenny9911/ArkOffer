@@ -39,6 +39,9 @@ import JobCollaboration, {
 import SequenceWorkspace from "./SequenceWorkspace";
 import SourcingWorkspace from "./SourcingWorkspace";
 import ScreeningDrafting from "./ScreeningDrafting";
+import ScreeningWorkspace from "./ScreeningWorkspace";
+import ScreeningCandidates from "./ScreeningCandidates";
+import { useLocation } from "react-router-dom";
 
 type Item = {
   id: string;
@@ -1646,7 +1649,18 @@ function ScreeningPublicationDialog({
             <strong>{label(item)}</strong>
             <span>
               {Array.isArray(item.questions) ? item.questions.length : 0}{" "}
-              questions · Available for 7 days · One response
+              questions · Available for{" "}
+              {typeof (
+                item.screeningConfig as
+                  { outreach?: { deadlineDays?: unknown } } | undefined
+              )?.outreach?.deadlineDays === "number"
+                ? (
+                    item.screeningConfig as {
+                      outreach: { deadlineDays: number };
+                    }
+                  ).outreach.deadlineDays
+                : 7}{" "}
+              days · One response
             </span>
           </div>
           <p className="business-help">
@@ -2757,7 +2771,6 @@ function Reports() {
           </p>
         </>
       )}
-      <AiReports />
       {saving && (
         <SimpleNameDialog
           title="Save report"
@@ -2902,14 +2915,37 @@ function Fillmore() {
 }
 
 export default function Business({ section }: { section: string }) {
+  const location = useLocation();
   if (section === "sourcing")
     return <SourcingWorkspace candidateLibrary={<Candidates />} />;
   if (section === "candidates") return <Candidates />;
   if (section === "sequences") return <SequenceWorkspace />;
   if (section === "applications") return <Applications />;
-  if (section === "screening" || section === "screenings") return <Screening />;
+  if (section === "screening" || section === "screenings")
+    return (
+      <ScreeningWorkspace
+        renderPublication={(item, onClose) => (
+          <ScreeningPublicationDialog item={item} onClose={onClose} />
+        )}
+        renderResponses={(item, onClose) => (
+          <ScreeningResponses item={item} onClose={onClose} />
+        )}
+        renderCandidates={(item, onPublish, onDirty) => (
+          <ScreeningCandidates
+            item={item}
+            onPublish={onPublish}
+            onDirty={onDirty}
+          />
+        )}
+      />
+    );
   if (section === "jobs" || section === "job-posts") return <Jobs />;
-  if (section === "reports") return <Reports />;
+  if (section === "reports")
+    return location.pathname === "/app/reports/analytics" ? (
+      <Reports />
+    ) : (
+      <AiReports />
+    );
   if (section === "fillmore") return <Fillmore />;
   return (
     <div className="business">
