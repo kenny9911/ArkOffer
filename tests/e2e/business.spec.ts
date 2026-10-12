@@ -270,6 +270,10 @@ test("screening draft builder and candidate preview preserve questions without c
     .getByLabel("Answer options", { exact: false })
     .fill("Figma\nSketch\nOther");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page).toHaveURL(
+    /\/app\/screening\/[a-f0-9-]+(?:\?tab=builder)?$/,
+  );
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
   await page.reload();
   await page
     .getByRole("button", { name: "Try candidate preview", exact: true })
@@ -297,6 +301,7 @@ test("screening draft builder and candidate preview preserve questions without c
     .getByLabel("Screening title")
     .fill("Updated designer introduction");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
   await page.reload();
   await page.getByRole("tab", { name: "Setup", exact: true }).click();
   await expect(page.getByLabel("Screening title", { exact: true })).toHaveValue(
