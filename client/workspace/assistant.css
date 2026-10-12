@@ -1,0 +1,130 @@
+.assistant-workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-items: start;
+  align-content: start;
+}
+.assistant-history {
+  padding: 24px 16px;
+  border-right: 1px solid var(--border);
+  background: #fafaf9;
+  min-width: 0;
+}
+.assistant-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.assistant-history h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.assistant-thread {
+  display: flex;
+  border-radius: 8px;
+  margin: 4px 0;
+}
+.assistant-thread.selected {
+  background: #e9edf4;
+}
+.assistant-thread > button:first-child {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 12px 8px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+  color: inherit;
+}
+.assistant-thread span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.assistant-thread svg {
+  flex-shrink: 0;
+}
+.assistant-main {
+  padding: 36px;
+  max-width: 1060px;
+  width: 100%;
+  margin: 0 auto;
+  min-width: 0;
+}
+.assistant-main h1 {
+  font-size: 30px;
+  margin: 8px 0;
+}
+.assistant-messages {
+  min-height: 180px;
+}
+.assistant-welcome {
+  padding: 40px 24px;
+  margin: 24px 0;
+  background: #f7f8fa;
+  border-radius: 12px;
+}
+.assistant-welcome h2 {
+  font-size: 20px;
+}
+.assistant-answer {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.assistant-answer h2 {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.assistant-answer-text {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.assistant-answer blockquote {
+  margin: 16px 0;
+  padding-left: 16px;
+  border-left: 2px solid #cdd3df;
+  font-size: 14px;
+}
+.assistant-answer details summary {
+  cursor: pointer;
+}
+.assistant-compose {
+  margin-top: 24px;
+}
+.assistant-compose > div:last-child {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+.assistant-compose select,
+.assistant-compose textarea {
+  width: 100%;
+}
+@media (max-width: 900px) {
+  .assistant-workspace {
+    display: block;
+  }
+  .assistant-history {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    max-height: 210px;
+    overflow: auto;
+  }
+  .assistant-main {
+    padding: 24px 18px;
+  }
+  .assistant-compose > div:last-child {
+    align-items: flex-start;
+  }
+}

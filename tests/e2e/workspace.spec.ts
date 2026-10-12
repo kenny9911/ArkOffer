@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 const transcript =
   "Interviewer: What have you built recently?\nRiley: I built a TypeScript recruiting dashboard and integrated a calendar service.\nInterviewer: What are you looking for next?\nRiley: I want to work on accessible products with a small collaborative team.\nInterviewer: When can you join?\nRiley: I can start in four weeks.\nInterviewer: We will arrange a design interview next week.";
 async function signUp(page: any) {
