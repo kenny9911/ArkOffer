@@ -28,6 +28,40 @@ type Draft = {
   } | null;
 };
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+class JobGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly settled: boolean,
+  ) {
+    super(message);
+  }
+}
+async function generateDraft(
+  body: Record<string, unknown> & { requestId: string },
+  signal: AbortSignal,
+) {
+  const response = await fetch("/api/job-drafts", {
+    ...json("POST", body),
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    signal,
+  });
+  const data = await response.json().catch(() => null);
+  if (!data || typeof data !== "object" || (response.ok && !data.item))
+    throw new JobGenerationError(
+      "The server response could not be read. Refresh drafts or retry to check this same request without starting another generation.",
+      false,
+    );
+  if (!response.ok)
+    throw new JobGenerationError(
+      typeof data.error === "string"
+        ? data.error
+        : "The request could not be completed.",
+      data.requestId === body.requestId &&
+        ["failed", "discarded", "stale"].includes(data.generationStatus),
+    );
+  return data;
+}
 export default function JobDrafting({
   job,
   source,
@@ -47,6 +81,7 @@ export default function JobDrafting({
     [selected, setSelected] = useState("");
   const [description, setDescription] = useState(""),
     [confirmed, setConfirmed] = useState(false);
+  const [retryAvailable, setRetryAvailable] = useState(false);
   const controller = useRef<AbortController | null>(null),
     mounted = useRef(true),
     request = useRef<{ key: string; hash: string }>({
@@ -129,14 +164,19 @@ export default function JobDrafting({
       request.current = { key: crypto.randomUUID(), hash };
     setBusy(true);
     setError("");
+    setRetryAvailable(false);
     const abort = new AbortController();
     controller.current = abort;
     try {
-      const data = await api("job-drafts", {
-        ...json("POST", { ...body, requestId: request.current.key }),
-        signal: abort.signal,
-      });
+      const data = await generateDraft(
+        { ...body, requestId: request.current.key },
+        abort.signal,
+      );
       if (!mounted.current) return;
+      setItems((previous) => [
+        data.item,
+        ...previous.filter((item) => item.id !== data.item.id),
+      ]);
       choose(data.item);
       if (data.item.status === "running")
         setError(
@@ -144,13 +184,31 @@ export default function JobDrafting({
         );
       if (data.item.status !== "running")
         request.current = { key: crypto.randomUUID(), hash: "" };
-      await load();
+      if (["failed", "discarded", "stale"].includes(data.item.status)) {
+        setRetryAvailable(true);
+        setError(
+          `${data.item.error || "This draft did not complete."} Try a new AI draft to start another attempt.`,
+        );
+      }
+      await load().catch(() => {
+        if (mounted.current)
+          setError(
+            "The draft response was received, but its history could not be refreshed. Use Refresh drafts to check the latest saved status.",
+          );
+      });
     } catch (e) {
       if (mounted.current) {
+        const settled = e instanceof JobGenerationError && e.settled;
+        if (settled) {
+          request.current = { key: crypto.randomUUID(), hash: "" };
+          setRetryAvailable(true);
+        }
         setError(
           abort.signal.aborted
             ? "Generation stopped. Refresh history before making another paid request."
-            : (e as Error).message,
+            : settled
+              ? `${(e as Error).message} Try a new AI draft to start another attempt.`
+              : `${(e as Error).message} Check this request again to reuse the same attempt, or refresh its history.`,
         );
         await load().catch(() => {});
       }
@@ -313,7 +371,7 @@ export default function JobDrafting({
               disabled={!available}
             >
               <Sparkles size={16} />
-              Generate private draft
+              {retryAvailable ? "Try a new AI draft" : "Generate private draft"}
             </Button>
           </fieldset>
         </form>

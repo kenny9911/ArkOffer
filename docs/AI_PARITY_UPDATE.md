@@ -2,6 +2,8 @@
 
 This implementation follows the [signed-in source review](SOURCE_REVIEW.md). ArkOffer still does not have 100% Metaview parity; [PARITY.md](PARITY.md) distinguishes implemented behavior from open features and provider limits.
 
+The subsequent [job/application follow-up](JOB_AI_APPLICATION_UPDATE.md) verifies job AI live again and adds timeout recovery, private CV evidence and job collaboration. The timeout below remains the record of this earlier delivery.
+
 ## Sequence AI failure
 
 The follow-up reproduced a second failure underneath the earlier connection failures: the provider returned a valid LinkedIn message with an empty subject, but the draft schema required a subject for every channel. Subjects are now required only for automatic email, manual email and InMail. LinkedIn messages/connections, calls, SMS and tasks accept optional titles. The same rule applies to proposal validation and approved delivery, so accepting the draft does not leave a later launch failure.

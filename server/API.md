@@ -77,6 +77,29 @@ Sources expose `kind,id,title,text,fingerprint`. Document limits: 10 MB/file, 60
 
 Draft items contain `id,jobId,title,status,result,error,model,sourceCurrent,createdAt`; `result` has `description,suggestions,missingDetails`. States include `running|ready|stale|failed|applied|discarded`. Request UUIDs are author/workspace scoped; matching retries reuse stored results, and deleted/expired requests cannot be regenerated under the same ID. Source access and revisions are checked before/after generation, on history/replay and before apply; invalid source content is withheld. Repeated apply returns the latest job. Limits: 100 retained drafts per author/workspace, two active requests and 30 generation attempts per workspace/hour, a 120-second streamed AI deadline and the 1 MB resource cap. Sanitized provider failures are preserved for the author. No external job publishing or ATS write-back occurs.
 
+Known terminal generation errors include `requestId` and `generationStatus` alongside `error`. The editor offers an explicit new attempt only after confirming a terminal result; ambiguous network failures retain the original request identity. Deleting a running draft aborts its upstream request and rejects late output; it cannot undo provider usage already incurred. The job drafting profile uses concise output guidance and optional reasoning controls described below, without changing the model, deadline or token budget.
+
+## Collaborative job review
+
+These routes require an active workspace member and a job in that workspace. Comments are workspace-visible; only their author can edit or delete them. Reviewer identities expose names, not email addresses.
+
+- `POST /api/job-collaboration/summary`: `{ids}` → `{items:[{id,commentCount,reviewedCount}]}`. Up to 200 UUIDs; foreign/deleted IDs omitted.
+- `GET /api/jobs/:jobId/collaboration` → `{fingerprint,snapshot,comments,checks,history,commentCount,reviewedCount,limits}`. The snapshot identifies the current job version.
+- `POST /api/jobs/:jobId/comments`: `{body}` → `{id}` (201).
+- `PATCH /api/jobs/:jobId/comments/:id`: `{body,revision}` → `{ok:true}`. `DELETE` at the same path accepts `{revision}`. Stale revisions return 409.
+- `POST /api/jobs/:jobId/review`: `{fingerprint,revision,reviewed}` → `{ok:true}`. Initial own revision is zero. Job fingerprint and own revision conflicts return 409; the editor refuses to review a stale preview.
+
+Checks bind to job title, description, metadata, status and update revision. Edits invalidate earlier checks; suspended/removed members do not count. Checks are human review acknowledgments, not AI/compliance scores or publication approval. Limits: 4,000 characters/comment, 200 comments/job, 20,000/workspace, 30 comment creates/person/workspace/hour, 60 review changes/person/workspace/hour, latest 200 review history events/job. Usage survives content deletion. Deleting a job cascades its collaboration records. A successful save followed by a failed refresh is reported as saved, preventing accidental duplicate comment retries.
+
+## Private application CV documents
+
+- `GET /api/applications/:id/documents` → `{items}` containing only the current author's document metadata, fingerprints and lengths for that application/workspace.
+- `POST /api/applications/:id/documents` accepts one multipart `file` (PDF/DOCX) → `{item}` (201), including extracted-text preview and fingerprint. Upload does not select evidence or invoke AI.
+- `GET /api/applications/:id/documents/:documentId` → `{item}` with privately authorized extracted text.
+- `DELETE /api/applications/:id/documents/:documentId` → `{ok:true}`. Deletes the private source and invalidates derived reviews without changing the application decision.
+
+Limits: 10 MB/file, 60,000 extracted characters, five documents/application/author, 50/author/workspace, 20 workspace upload attempts/hour. Parsing reuses the isolated PDF/DOCX bounds below. Originals are removed after extraction or handled failure; only extracted text remains in private tables, separate from generic resources and Notes. Identity/membership, application existence, connection and retention are rechecked after extraction. Scanned-image OCR and ATS attachment import are absent.
+
 ## Application criteria and evidence assistance
 
 Job criteria are workspace-visible only after explicit approval. Criteria drafts, analysis outputs and reviewer notes are private to the current user/workspace.
@@ -85,12 +108,12 @@ Job criteria are workspace-visible only after explicit approval. Criteria drafts
 - `PUT /api/jobs/:id/review-criteria`: `{revision,approved:true,criteria:[{id,text,importance}]}` → `{revision,criteria}`. Each criterion has a unique UUID, 1–600 character text and `importance:"required"|"preferred"`; one to ten criteria. Revision mismatch returns 409.
 - `POST /api/jobs/:id/review-criteria/draft`: `{requestId,revision}` → `{item}` (201 for new output). Requires a current nonempty job description of at most 30,000 characters. Draft output contains proposed criteria plus provider/model; it does not approve them.
 - `GET /api/applications/:id/review-assistance` → `{jobId,criteria,candidateEvidence,sources,items,setup:{enabled}}`; up to 30 recent own analysis runs. Source choices include only readable, unarchived transcripts.
-- `POST /api/applications/:id/review-assistance`: `{requestId,criteriaRevision,conversationIds,consent:true}` → `{item}` (201 for a new completed run). Select zero to five unique transcript UUIDs; a linked candidate with professional evidence can supply the source when no transcript is selected. The application must reference a job with current approved criteria.
+- `POST /api/applications/:id/review-assistance`: `{requestId,criteriaRevision,conversationIds,documents?,consent:true}` → `{item}` (201 for a new completed run). Select zero to five unique transcript UUIDs and up to three unique private `documents:[{id,fingerprint}]`. A linked candidate with professional evidence can also supply source material. At least one source and a job with current approved criteria are required. Document content is resolved by the server, never accepted inline.
 - `PATCH /api/applications/:id/review-assistance/:runId`: `{notes,reviewed}` → `{item}`. Saves up to 10,000 characters of private human notes and an optional reviewed timestamp; it does not change a hiring decision.
 
 Run items include `id,kind,status,createdAt` and, only while sources/access are current, `output,notes,reviewedAt,error`. Analysis output includes all approved criteria exactly once, with `criterionId,evidence:[{sourceId,quote}],missingInformation,followUp`, the approved criteria/source snapshot, provider/model and `humanReviewRequired:true`. Quotes must match supplied evidence exactly. Candidate source fields are limited to role, company and skills; the combined selected evidence limit is 60,000 characters. Recruiter opinions and previous decisions are not supplied as candidate facts.
 
-Repeated UUIDs return their persisted request state (202 while running, otherwise 200); request mismatches are rejected. Session, membership, application/job/candidate content, criteria revision and transcript access are checked after generation and on later reads/review-note writes. Stale results withhold output and private notes. Limits: ten attempts per user/hour, 50 per workspace/hour, two active requests per workspace, 55-second cancellation deadline and 20 KB provider output. Missing evidence is not a negative assessment. These endpoints do not ingest CVs, rank/score applicants, recommend or automate rejection, change ATS stages, or run continuous review.
+Repeated UUIDs return their persisted request state (202 while running, otherwise 200); request mismatches are rejected. Session, membership, application/job/candidate content, criteria revision, transcript access and private document fingerprints are checked after generation and on later reads/review-note writes. Deleted, changed, reassigned or inaccessible sources withhold output and private notes. Empty document selections preserve legacy transcript/profile request identities. Limits: ten attempts per user/hour, 50 per workspace/hour, two active requests per workspace, 55-second cancellation deadline and 20 KB provider output. Missing evidence is not a negative assessment. These endpoints do not rank/score applicants, produce integrity verdicts, recommend or automate rejection, change ATS stages, or run continuous review.
 
 ## Private AI report views
 
@@ -129,7 +152,9 @@ Limits: 100 views per author/workspace, one active run per author/workspace, 500
 
 ## Provider configuration
 
-Text also supports RoboApply-compatible `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (or `OPENROUTER_API_BASE_URL`), exact `LLM_MODEL`, and `LLM_WORKSPACE_IDS`. If defined, `LLM_WORKSPACE_IDS` supersedes the legacy OpenAI text allowlist even when blank. Notes, job drafts, application evidence assistance and report columns share this configuration without new keys. Audio remains separate. See [provider setup](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+Text also supports RoboApply-compatible `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (or `OPENROUTER_API_BASE_URL`), exact `LLM_MODEL`, and `LLM_WORKSPACE_IDS`. If defined, `LLM_WORKSPACE_IDS` supersedes the legacy OpenAI text allowlist even when blank. Notes, job drafts, application evidence assistance and report columns share this configuration without new provider credentials. Audio remains separate. See [provider setup](../docs/RECONSTRUCTION.md#text-gateway-and-voice-screening).
+
+Optional `LLM_REASONING_EFFORT` applies generally; nonempty `LLM_JOB_REASONING_EFFORT` and `LLM_INTERVIEW_REASONING_EFFORT` override it for their task. Values: `none|minimal|low|medium|high|xhigh|max|provider`; `provider` omits reasoning controls. Invalid explicit values fail before a paid call. Job requests default to low reasoning only for recognized OpenAI reasoning-family names; chat/pro/custom aliases and other models retain provider defaults. OpenRouter uses `reasoning.effort`, direct OpenAI uses `reasoning_effort`. Exact model names and request budgets are preserved. Streamed and complete-JSON response readers both honor cancellation and deadlines explicitly; neither triggers automatic retries.
 
 Direct OpenAI server environment: `OPENAI_API_KEY`, `OPENAI_WORKSPACE_IDS` (comma-separated workspace UUIDs), `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_TRANSCRIPTION_MODEL` (default `whisper-1`). Keys remain server-side. AI and transcription requests happen only on explicit action; demo creation and regular CRUD require no provider. Provider errors leave existing conversation notes intact. Credentials are never returned by the settings or integration APIs.
 

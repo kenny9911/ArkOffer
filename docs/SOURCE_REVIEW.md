@@ -2,7 +2,7 @@
 
 This review compares ArkOffer with the signed-in Metaview account supplied for inspection and the public product pages. It covers every main navigation area, but does **not** establish complete feature parity. Account setup gates, unavailable provider connections, unpublished backend behavior and source datasets prevent that conclusion.
 
-Implementation updates after this audit are recorded in the [13 October AI and parity update](AI_PARITY_UPDATE.md). That follow-up resolves the sequence drafting defect and adds job-source creation and report construction/grouping; the source observations below remain the 12 October audit record.
+Implementation updates after this audit are recorded in the [13 October AI and parity update](AI_PARITY_UPDATE.md). That follow-up resolves the sequence drafting defect and adds job-source creation and report construction/grouping; the source observations below remain the 12 October audit record. The later [job/application update](JOB_AI_APPLICATION_UPDATE.md) adds CV evidence and job collaboration and records focused REA evidence and live job verification.
 
 ## How the evidence was collected
 

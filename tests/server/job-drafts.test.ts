@@ -53,15 +53,17 @@ async function fixture(t: TestContext) {
     other = identity();
   let allowed = true,
     calls = 0,
-    complete: () => Promise<string> = async () => proposal();
+    complete: (
+      settings?: Parameters<ReturnType<typeof createAi>["complete"]>[2],
+    ) => Promise<string> = async () => proposal();
   const ai = {
     provider: "synthetic",
     model: "synthetic-model",
     configured: true,
     allowed: () => allowed,
-    complete: async () => {
+    complete: async (_messages, _json, settings) => {
       calls++;
-      return complete();
+      return complete(settings);
     },
   } as ReturnType<typeof createAi>;
   const app = express();
@@ -112,7 +114,7 @@ async function fixture(t: TestContext) {
     setAllowed: (value: boolean) => {
       allowed = value;
     },
-    setComplete: (value: () => Promise<string>) => {
+    setComplete: (value: typeof complete) => {
       complete = value;
     },
     calls: () => calls,
@@ -335,6 +337,8 @@ test("job drafting keeps sanitized deadline details but hides unexpected provide
     assert.equal(response.status, 502);
     const failure = await response.json();
     assert.doesNotMatch(failure.error, /secret/);
+    assert.equal(failure.requestId, input.requestId);
+    assert.equal(failure.generationStatus, "failed");
     if (error instanceof AiError) assert.equal(failure.error, error.message);
     const before = f.calls();
     const replay = await (
@@ -348,6 +352,60 @@ test("job drafting keeps sanitized deadline details but hides unexpected provide
     assert.equal(f.calls(), before);
   }
   assert.equal(f.store.list(f.owner.workspaceId, "jobs").length, 0);
+});
+test("deleting a running job draft cancels its provider request, checks ownership and rejects a late result", async (t) => {
+  const f = await fixture(t),
+    input = f.input();
+  let started!: () => void,
+    finish!: () => void,
+    signal: AbortSignal | undefined;
+  const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    }),
+    pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+  f.setComplete(async (settings) => {
+    signal = settings?.signal;
+    assert.equal(settings?.task, "job-draft");
+    started();
+    // Deliberately return after cancellation: the application must reject late output.
+    await pending;
+    return proposal();
+  });
+  const request = f.call(f.owner.cookie, "job-drafts", "POST", input);
+  await ready;
+  const draft = (await (await f.call(f.owner.cookie, "job-drafts")).json())
+    .items[0];
+  assert.equal(draft.status, "running");
+  assert.equal(
+    (await f.call(f.teammate.cookie, `job-drafts/${draft.id}`, "DELETE"))
+      .status,
+    404,
+  );
+  assert.equal(signal?.aborted, false);
+  assert.equal(
+    (await f.call(f.owner.cookie, `job-drafts/${draft.id}`, "DELETE")).status,
+    200,
+  );
+  assert.equal(signal?.aborted, true);
+  finish();
+  const response = await request;
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).generationStatus, "discarded");
+  const replay = await (
+    await f.call(f.owner.cookie, "job-drafts", "POST", input)
+  ).json();
+  assert.equal(replay.item.status, "discarded");
+  assert.equal(replay.item.result, null);
+  assert.equal(f.calls(), 1);
+  assert.equal(f.store.list(f.owner.workspaceId, "jobs").length, 0);
+  await f.call(f.owner.cookie, `job-drafts/${draft.id}`, "DELETE");
+  assert.equal(
+    (await f.call(f.owner.cookie, "job-drafts", "POST", input)).status,
+    410,
+  );
+  assert.equal(f.calls(), 1);
 });
 test("changes to the job, session, workspace or allowlist during generation discard the late result", async (t) => {
   for (const change of ["job", "session", "workspace", "allowlist"]) {

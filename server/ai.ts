@@ -72,6 +72,7 @@ export function createAi(options: Options = {}) {
       json = false,
       settings: {
         interview?: boolean;
+        task?: "job-draft";
         signal?: AbortSignal;
         maxTokens?: number;
         timeoutMs?: number;
@@ -85,12 +86,39 @@ export function createAi(options: Options = {}) {
       const chosenModel = settings.interview
         ? env.LLM_INTERVIEW_MODEL?.trim() || model
         : model;
-      const effort = settings.interview
-        ? env.LLM_INTERVIEW_REASONING_EFFORT
-        : undefined;
-      const reasoning =
+      const configuredEffort =
+        (settings.interview
+          ? env.LLM_INTERVIEW_REASONING_EFFORT?.trim()
+          : settings.task === "job-draft"
+            ? env.LLM_JOB_REASONING_EFFORT?.trim()
+            : undefined) || env.LLM_REASONING_EFFORT?.trim();
+      // Use a short drafting profile only for recognized reasoning families.
+      // Explicit configuration always wins; unknown models retain provider defaults.
+      const jobReasoningModel =
+        /^(?:openai\/)?(?:gpt-[56](?:\.\d+)?(?:-(?:mini|nano|sol|astra|luna))?|o[34](?:-mini)?|o1)(?:-\d{4}-\d{2}-\d{2})?$/i.test(
+          chosenModel,
+        );
+      const effort =
+        configuredEffort ||
+        (settings.task === "job-draft" && jobReasoningModel
+          ? "low"
+          : undefined);
+      if (
         effort &&
-        ["none", "minimal", "low", "medium", "high", "xhigh"].includes(effort)
+        ![
+          "provider",
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ].includes(effort)
+      )
+        throw new AiError("The configured AI reasoning effort is unsupported.");
+      const reasoning =
+        effort && effort !== "provider"
           ? provider === "openrouter"
             ? { reasoning: { effort } }
             : { reasoning_effort: effort }
@@ -198,9 +226,24 @@ export function createAi(options: Options = {}) {
       const reader = response.body.getReader(),
         chunks: Uint8Array[] = [];
       let size = 0;
+      let rejectAbort: (error: Error) => void;
+      const aborted = new Promise<never>((_resolve, reject) => {
+        rejectAbort = reject;
+      });
+      const onAbort = () => {
+        rejectAbort(
+          cancellationError() || new AiError("The AI request was cancelled."),
+        );
+        void reader.cancel().catch(() => {});
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
       try {
+        if (signal.aborted)
+          throw (
+            cancellationError() || new AiError("The AI request was cancelled.")
+          );
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await Promise.race([reader.read(), aborted]);
           if (done) break;
           size += value.length;
           if (size > 1_000_000) {
@@ -211,6 +254,10 @@ export function createAi(options: Options = {}) {
           }
           chunks.push(value);
         }
+        if (signal.aborted)
+          throw (
+            cancellationError() || new AiError("The AI request was cancelled.")
+          );
         const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         if (result?.choices?.[0]?.finish_reason === "length")
           throw new AiError(
@@ -238,6 +285,8 @@ export function createAi(options: Options = {}) {
           new AiError("The AI provider returned an unreadable response.")
         );
       } finally {
+        signal.removeEventListener("abort", onAbort);
+        void reader.cancel().catch(() => {});
         reader.releaseLock();
       }
     },

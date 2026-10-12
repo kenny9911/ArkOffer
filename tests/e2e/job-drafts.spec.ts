@@ -165,7 +165,15 @@ test("job drafting retries keep one request ID while a lost-response draft is ru
         await route.abort("connectionfailed");
         return;
       }
-      if (ids.length === 3) {
+      if (ids.length === 2) {
+        await route.fulfill({
+          status: 502,
+          contentType: "text/html",
+          body: "<h1>Gateway unavailable</h1>",
+        });
+        return;
+      }
+      if (ids.length === 4) {
         draft.status = "ready";
         draft.result = {
           description: "Reviewed retry draft",
@@ -197,12 +205,88 @@ test("job drafting retries keep one request ID while a lost-response draft is ru
   await expect.poll(() => ids.length).toBe(1);
   await expect(generate).toBeEnabled();
   await generate.click();
+  await expect(dialog).toContainText("The server response could not be read");
+  await expect(generate).toBeEnabled();
+  await generate.click();
   await expect(dialog).toContainText("This draft is still running");
   await expect(generate).toBeEnabled();
   await generate.click();
   await expect(dialog.getByLabel("Proposed job description")).toHaveValue(
     "Reviewed retry draft",
   );
-  expect(ids).toHaveLength(3);
+  expect(ids).toHaveLength(4);
   expect(new Set(ids).size).toBe(1);
+});
+
+test("a confirmed job AI timeout offers one explicit new attempt without replaying the failed request", async ({
+  page,
+  baseURL,
+}) => {
+  await signup(page, baseURL);
+  const draft = {
+    id: crypto.randomUUID(),
+    jobId: null,
+    title: "Timeout role",
+    status: "failed",
+    sourceCurrent: true,
+    error: "The AI provider took too long to respond. Please try again.",
+    model: "synthetic",
+    createdAt: new Date().toISOString(),
+    result: null as null | {
+      description: string;
+      suggestions: string[];
+      missingDetails: string[];
+    },
+  };
+  const ids: string[] = [];
+  await page.route("**/api/job-drafts", async (route) => {
+    if (route.request().method() === "POST") {
+      ids.push(route.request().postDataJSON().requestId);
+      if (ids.length === 1) {
+        await route.fulfill({
+          status: 502,
+          json: {
+            error: draft.error,
+            requestId: ids[0],
+            generationStatus: "failed",
+          },
+        });
+        return;
+      }
+      draft.id = crypto.randomUUID();
+      draft.status = "ready";
+      draft.result = {
+        description: "A fresh, explicitly requested draft.",
+        suggestions: [],
+        missingDetails: [],
+      };
+      await route.fulfill({ status: 201, json: { item: draft } });
+    } else
+      await route.fulfill({
+        json: { available: true, items: ids.length ? [draft] : [] },
+      });
+  });
+  await page.goto("/app/job-posts");
+  await page
+    .getByRole("button", { name: "AI job drafts", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "AI job drafts" });
+  await dialog.getByLabel("Draft job title", { exact: true }).fill(draft.title);
+  await dialog
+    .getByLabel("Role brief", { exact: true })
+    .fill("Build reliable APIs");
+  await dialog.getByRole("button", { name: "Generate private draft" }).click();
+  await expect(dialog).toContainText("The AI provider took too long");
+  const retry = dialog.getByRole("button", { name: "Try a new AI draft" });
+  await expect(retry).toBeEnabled();
+  expect(ids).toHaveLength(1);
+  await retry.click();
+  await expect(dialog.getByLabel("Proposed job description")).toHaveValue(
+    "A fresh, explicitly requested draft.",
+  );
+  expect(ids).toHaveLength(2);
+  expect(ids[0]).not.toBe(ids[1]);
+  expect(
+    (await (await page.request.get("/api/jobs")).json()).items,
+  ).toHaveLength(0);
 });

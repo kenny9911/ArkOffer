@@ -143,6 +143,36 @@
   font-size: 13px;
   line-height: 1.6;
 }
+.application-documents {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--line, #deded8);
+  border-radius: 8px;
+}
+.application-documents input[type="file"] {
+  font: inherit;
+  max-width: 100%;
+}
+.application-documents-list {
+  display: grid;
+  gap: 10px;
+}
+.application-documents-list article {
+  border-top: 1px solid var(--line, #deded8);
+  padding: 8px 0;
+}
+.application-documents-list small {
+  display: block;
+}
+.application-document-confirm {
+  padding: 10px 14px;
+  background: #f7f2e6;
+  margin-top: 12px;
+  border-radius: 7px;
+}
+.application-document-preview h4 {
+  margin: 0;
+}
 @media (max-width: 700px) {
   .application-review {
     padding: 16px;

@@ -196,10 +196,31 @@ test("formatted sequence body and Cc/Bcc persist, preview safely, and appear in 
     .fill("An introduction");
   const body = page.getByLabel("Step 1 body", { exact: true });
   await body.fill("Hello {{firstName}}");
+  // Reproduce a delayed animation frame arriving after the next keyboard action.
+  // Formatting must restore selection in its commit, without overwriting that action.
+  await page.evaluate(() => {
+    const original = window.requestAnimationFrame;
+    const callbacks: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = (callback) => {
+      callbacks.push(callback);
+      return -callbacks.length;
+    };
+    window.addEventListener(
+      "release-sequence-test-frames",
+      () => {
+        window.requestAnimationFrame = original;
+        for (const callback of callbacks) callback(performance.now());
+      },
+      { once: true },
+    );
+  });
   await body.press("ControlOrMeta+A");
   await page.getByRole("button", { name: "Bold step 1 selection" }).click();
   await expect(body).toHaveValue("**Hello {{firstName}}**");
   await body.press("ArrowRight");
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("release-sequence-test-frames")),
+  );
   await page.getByRole("button", { name: "Add link to step 1" }).click();
   const link = page.getByRole("dialog", { name: "Insert secure link" });
   await link.getByLabel("Link text").fill("Read the role");
@@ -209,6 +230,9 @@ test("formatted sequence body and Cc/Bcc persist, preview safely, and appear in 
   ).toBeDisabled();
   await link.getByLabel("HTTPS address").fill("https://example.com/role");
   await link.getByRole("button", { name: "Insert link", exact: true }).click();
+  await expect(body).toHaveValue(
+    "**Hello {{firstName}}**[Read the role](https://example.com/role)",
+  );
   await page.getByLabel("Step 1 Cc", { exact: true }).fill("team@example.com");
   await page
     .getByLabel("Step 1 Bcc", { exact: true })
