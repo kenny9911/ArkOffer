@@ -49,10 +49,10 @@ test("sequence preview, explicit local launch, persisted outbox, pause and manua
   expect(sequenceResponse.ok()).toBeTruthy();
   const sequence = (await sequenceResponse.json()).item;
   await page.goto("/app/sequences");
-  const row = page
-    .getByRole("row")
-    .filter({ hasText: "Personalized engineering" });
-  await row.getByRole("button", { name: "Delivery", exact: true }).click();
+  await page.getByRole("link", { name: /Personalized engineering/ }).click();
+  await page
+    .getByRole("button", { name: "Review delivery", exact: true })
+    .click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("No email is sent to candidates.");
   await dialog.getByText("Alex Example", { exact: true }).click();
@@ -100,7 +100,9 @@ test("sequence preview, explicit local launch, persisted outbox, pause and manua
     .getByRole("button", { name: "Close dialog", exact: true })
     .click();
   await page.reload();
-  await row.getByRole("button", { name: "Delivery", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Review delivery", exact: true })
+    .click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: /Activity/ })

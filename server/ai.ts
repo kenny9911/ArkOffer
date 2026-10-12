@@ -73,6 +73,7 @@ export function createAi(options: Options = {}) {
         interview?: boolean;
         signal?: AbortSignal;
         maxTokens?: number;
+        timeoutMs?: number;
       } = {},
     ) {
       if (!configured)
@@ -95,6 +96,9 @@ export function createAi(options: Options = {}) {
       const tokens = Number.isFinite(settings.maxTokens)
         ? Math.max(1, Math.min(Math.floor(settings.maxTokens!), 8192))
         : 8192;
+      const timeoutMs = Number.isFinite(settings.timeoutMs)
+        ? Math.max(1, Math.min(Math.floor(settings.timeoutMs!), 120_000))
+        : 60_000;
       if (
         !Array.isArray(messages) ||
         !messages.length ||
@@ -123,6 +127,15 @@ export function createAi(options: Options = {}) {
         throw new AiError(
           "The AI request exceeded the supported size. Please use less source material.",
         );
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const cancellationError = () =>
+        settings.signal?.aborted
+          ? new AiError("The AI request was cancelled.")
+          : timeoutSignal.aborted
+            ? new AiError(
+                "The AI provider took too long to respond. Please try again.",
+              )
+            : null;
       let response: Response;
       try {
         response = await (options.fetch || fetch)(endpoint, {
@@ -134,12 +147,13 @@ export function createAi(options: Options = {}) {
           },
           body,
           signal: settings.signal
-            ? AbortSignal.any([settings.signal, AbortSignal.timeout(60_000)])
-            : AbortSignal.timeout(60_000),
+            ? AbortSignal.any([settings.signal, timeoutSignal])
+            : timeoutSignal,
         });
       } catch {
-        throw new AiError(
-          "The AI provider could not be reached. Please try again.",
+        throw (
+          cancellationError() ||
+          new AiError("The AI provider could not be reached. Please try again.")
         );
       }
       if (!response.ok) {
@@ -177,7 +191,10 @@ export function createAi(options: Options = {}) {
         return text;
       } catch (error) {
         if (error instanceof AiError) throw error;
-        throw new AiError("The AI provider returned an unreadable response.");
+        throw (
+          cancellationError() ||
+          new AiError("The AI provider returned an unreadable response.")
+        );
       } finally {
         reader.releaseLock();
       }

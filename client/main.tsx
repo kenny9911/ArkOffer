@@ -198,11 +198,17 @@ function Workspace() {
     setAccount(false);
   }, [location.pathname]);
   if (!user) return <Navigate to="/login" replace />;
-  const title = location.pathname.includes("templates")
-    ? "Templates"
-    : location.pathname.includes("settings")
-      ? "Settings"
-      : nav.find((x) => location.pathname.startsWith(x[1]))?.[0] || "Notes";
+  const title =
+    location.pathname === "/app/candidates"
+      ? "Candidate library"
+      : location.pathname.includes("templates")
+        ? "Templates"
+        : location.pathname.includes("settings")
+          ? "Settings"
+          : nav.find((x) => location.pathname.startsWith(x[1]))?.[0] || "Notes";
+  const ownHeader =
+    location.pathname === "/app/sourcing" ||
+    location.pathname.startsWith("/app/sequences/");
   return (
     <div
       className={`workspace ${collapsed ? "collapsed" : ""} ${mobile ? "mobile-open" : ""}`}
@@ -312,7 +318,9 @@ function Workspace() {
         </div>
       </aside>
       <section className="workspace-main">
-        <header className="topbar">
+        <header
+          className={`topbar ${ownHeader ? "workspace-mobile-header" : ""}`}
+        >
           <button
             className="icon-btn mobile-menu"
             aria-label="Toggle navigation"
@@ -334,7 +342,9 @@ function Workspace() {
           <SettingsPage />
         ) : location.pathname === "/app/fillmore" ? (
           <WorkspaceAssistant />
-        ) : nav.some((entry) => entry[1] === location.pathname) ? (
+        ) : nav.some((entry) => entry[1] === location.pathname) ||
+          /^\/app\/sequences\/[^/]+$/.test(location.pathname) ||
+          location.pathname === "/app/candidates" ? (
           <Business
             key={location.pathname}
             section={location.pathname.split("/")[2]}

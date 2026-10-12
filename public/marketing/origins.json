@@ -31,6 +31,18 @@
       "source": "https://www.metaview.ai/_next/static/immutable/media/OnsiteMono-Regular.007n0jx5wrha5.woff2",
       "sha256": "32c9c6f370b58ea9ec8e457acf257d309df5e39554f2d83078107900c8dcd015",
       "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "coworker.webp",
+      "source": "https://www.metaview.ai/_next/image?url=%2F_next%2Fstatic%2Fimmutable%2Fmedia%2Ffillmore-coworker%404x.1s6_ynfzf03d0.png&w=1920&q=75",
+      "sha256": "bc9a58cd6c63bad001445e744722317a835fb3014d87df3fe5e3da86cc7cdacb",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "context.webp",
+      "source": "https://www.metaview.ai/_next/image?url=%2F_next%2Fstatic%2Fimmutable%2Fmedia%2Fhomepage-why-metaview.3a34-rd-m1769.jpg&w=1080&q=75",
+      "sha256": "589a642c749024f6c3028ddaece2066daad0d54b29c3bac0b416b104691bab47",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
     }
   ]
 }

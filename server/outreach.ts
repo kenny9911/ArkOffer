@@ -1,9 +1,15 @@
 import type { Express, Request, Response } from "express";
+import { urlencoded } from "express";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sessionUser, hashToken, type User } from "./auth.js";
 import type { Resource, Store } from "./db.js";
+import { renderEmailMarkup, escapeEmailHtml } from "../shared/email-markup.js";
 import { createMailTransport, MailError, type MailConfig } from "./mail.js";
+import {
+  sequenceStepSchema,
+  sequenceSettingsSchema,
+} from "./sequence-drafts.js";
 
 type Options = {
   clock?: () => number;
@@ -26,19 +32,10 @@ const inputText = (value: unknown) => (typeof value === "string" ? value : "");
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 const stepSchema = z
   .array(
-    z.object({
-      subject: z
-        .string()
-        .trim()
-        .min(1)
-        .max(200)
-        .refine(
-          (value) => !/[\r\n]/.test(value),
-          "Subject cannot contain newlines.",
-        ),
-      body: z.string().trim().min(1).max(5000),
-      delayDays: z.number().int().min(0).max(365),
-    }),
+    sequenceStepSchema.refine(
+      (step) => !!step.subject.trim() && !!step.body.trim(),
+      "Complete each step's subject and body before launching.",
+    ),
   )
   .min(1)
   .max(10)
@@ -46,6 +43,34 @@ const stepSchema = z
     (steps) => steps.every((step, index) => index === 0 || step.delayDays >= 1),
     "Follow-ups must wait at least one day after the previous step.",
   );
+/** Absent settings preserve the schedule of existing sequences. New drafts explicitly save a window. */
+function scheduledTime(time: number, raw: string | null | undefined): number {
+  if (!raw) return time;
+  const settings = sequenceSettingsSchema.parse(JSON.parse(raw));
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: settings.timezone,
+    weekday: "short",
+    hour: "numeric",
+    hourCycle: "h23",
+  });
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  for (
+    let candidate = time, i = 0;
+    i < 8 * 24 * 60;
+    i++, candidate = Math.ceil((candidate + 1) / 60000) * 60000
+  ) {
+    const parts = formatter.formatToParts(candidate),
+      day = days.indexOf(parts.find((part) => part.type === "weekday")!.value),
+      hour = Number(parts.find((part) => part.type === "hour")!.value);
+    if (
+      settings.weekdays.includes(day) &&
+      hour >= settings.startHour &&
+      hour < settings.endHour
+    )
+      return candidate;
+  }
+  throw new Error("No sending window is available.");
+}
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const DAY = 86_400_000;
@@ -89,6 +114,10 @@ export function registerOutreach(
       checked_at INTEGER, updated_at INTEGER NOT NULL, UNIQUE(enrollment_id,step_index)
     );
     CREATE INDEX IF NOT EXISTS outreach_due ON outreach_messages(status,due_at);
+    CREATE TABLE IF NOT EXISTS outreach_recipients (message_id TEXT NOT NULL REFERENCES outreach_messages(id) ON DELETE CASCADE,workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,email TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(message_id,email));
+    CREATE INDEX IF NOT EXISTS outreach_copy_suppression ON outreach_recipients(workspace_id,email);
+    CREATE TABLE IF NOT EXISTS outreach_recipient_budget (message_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,slots INTEGER NOT NULL,created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS outreach_slot_budget ON outreach_recipient_budget(workspace_id,created_at);
     CREATE TABLE IF NOT EXISTS outreach_events (
       id TEXT PRIMARY KEY, enrollment_id TEXT NOT NULL REFERENCES outreach_enrollments(id) ON DELETE CASCADE,
       message_id TEXT REFERENCES outreach_messages(id) ON DELETE CASCADE,
@@ -101,6 +130,19 @@ export function registerOutreach(
       PRIMARY KEY(workspace_id,email)
     );
   `);
+  for (const [table, column, definition] of [
+    ["outreach_messages", "kind", "TEXT NOT NULL DEFAULT 'email'"],
+    ["outreach_enrollments", "schedule", "TEXT"],
+    ["outreach_messages", "html", "TEXT"],
+    ["outreach_messages", "cc", "TEXT NOT NULL DEFAULT '[]'"],
+    ["outreach_messages", "bcc", "TEXT NOT NULL DEFAULT '[]'"],
+  ]) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((row) => row.name === column))
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+  db.exec(`INSERT OR IGNORE INTO outreach_recipients(message_id,workspace_id,email,kind) SELECT m.id,e.workspace_id,e.email,'to' FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.kind='email';
+    INSERT OR IGNORE INTO outreach_recipient_budget(message_id,workspace_id,slots,created_at) SELECT m.id,e.workspace_id,1,e.created_at FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.kind='email';`);
   const route =
     (handler: (req: Request, res: Response) => unknown) =>
     async (req: Request, res: Response) => {
@@ -161,7 +203,7 @@ export function registerOutreach(
       "UPDATE outreach_enrollments SET status=?, updated_at=? WHERE id=?",
     ).run(status, clock(), enrollmentId);
     db.prepare(
-      "UPDATE outreach_messages SET status='cancelled',error=?,updated_at=? WHERE enrollment_id=? AND status IN ('pending','waiting','retry')",
+      "UPDATE outreach_messages SET status='cancelled',error=?,updated_at=? WHERE enrollment_id=? AND status IN ('pending','waiting','retry','task_due')",
     ).run(detail, clock(), enrollmentId);
     event(enrollmentId, status, detail);
   };
@@ -172,9 +214,9 @@ export function registerOutreach(
       ).run(workspaceId, email, reason, clock());
       const rows = db
         .prepare(
-          "SELECT id FROM outreach_enrollments WHERE workspace_id=? AND email=? AND status IN ('active','paused','completed')",
+          "SELECT e.id FROM outreach_enrollments e WHERE e.workspace_id=? AND (e.email=? OR e.id IN(SELECT m.enrollment_id FROM outreach_messages m JOIN outreach_recipients r ON r.message_id=m.id WHERE r.workspace_id=? AND r.email=?)) AND e.status IN ('active','paused','completed')",
         )
-        .all(workspaceId, email) as Row[];
+        .all(workspaceId, email, workspaceId, email) as Row[];
       for (const row of rows) halt(String(row.id), "unsubscribed", reason);
     });
   const personalize = (text: string, candidate: Resource, user: User) => {
@@ -198,11 +240,18 @@ export function registerOutreach(
   };
   const preview = (user: User, item: Resource) => {
     const steps = stepSchema.parse(item.steps);
+    const manualOnly = steps.every((step) => step.kind !== "email");
+    const schedule = item.settings
+      ? sequenceSettingsSchema.parse(item.settings)
+      : null;
     const ids = z
       .array(z.string().uuid())
       .min(1, "Enroll at least one candidate first.")
       .max(MAX_RECIPIENTS)
       .parse(item.enrolledCandidateIds);
+    const copyRecipients = [
+      ...new Set(steps.flatMap((step) => [...step.cc, ...step.bcc])),
+    ];
     const seen = new Set<string>();
     const recipients = [...new Set(ids)].map((id) => {
       const candidate = store.get(user.workspaceId, "candidates", id);
@@ -217,19 +266,32 @@ export function registerOutreach(
         };
       const parsed = emailSchema.safeParse(candidate.email);
       const email = parsed.success ? parsed.data : "";
-      let reason = !email ? "Add a valid candidate email." : "";
+      let reason =
+        !email && !manualOnly
+          ? "Add a valid candidate email for automatic email steps."
+          : "";
+      // The non-email key preserves the existing enrollment uniqueness constraint without inventing a contact address.
+      const contactKey = email || `manual:${id}`;
+      if (manualOnly && suppressed(user.workspaceId, contactKey))
+        reason = "Unsubscribed or suppressed.";
       if (email && seen.has(email))
         reason = "Duplicate email in this enrollment.";
       if (email) seen.add(email);
       if (email && suppressed(user.workspaceId, email))
         reason = "Unsubscribed or suppressed.";
+      if (copyRecipients.includes(email))
+        reason =
+          "A candidate recipient is also listed in Cc/Bcc. Remove the duplicate before launch.";
       if (
-        email &&
+        copyRecipients.some((address) => suppressed(user.workspaceId, address))
+      )
+        reason = "A Cc/Bcc recipient is suppressed. Remove them before launch.";
+      if (
         db
           .prepare(
-            "SELECT id FROM outreach_enrollments WHERE sequence_id=? AND email=?",
+            "SELECT id FROM outreach_enrollments WHERE sequence_id=? AND (email=? OR candidate_id=?)",
           )
-          .get(item.id, email)
+          .get(item.id, contactKey, id)
       )
         reason =
           "Already launched for this email. Duplicate sends are blocked.";
@@ -237,22 +299,57 @@ export function registerOutreach(
         candidateId: id,
         name: inputText(candidate.name),
         email,
+        contactKey,
         eligible: !reason,
         reason,
-        messages: steps.map((step, index) => ({
-          step: index + 1,
-          subject: personalize(step.subject, candidate, user),
-          text: personalize(step.body, candidate, user),
-          delayDays: step.delayDays,
-        })),
+        messages: steps.map((step, index) => {
+          const body =
+            step.format === "formatted"
+              ? renderEmailMarkup(step.body, (value) =>
+                  personalize(value, candidate, user),
+                )
+              : { text: personalize(step.body, candidate, user), html: null };
+          return {
+            step: index + 1,
+            kind: step.kind,
+            subject: personalize(step.subject, candidate, user),
+            text: body.text,
+            html: body.html,
+            cc: step.cc,
+            bcc: step.bcc,
+            delayDays: step.delayDays,
+          };
+        }),
       };
     });
+    const recipientSlots = recipients
+      .filter((recipient) => recipient.eligible)
+      .reduce(
+        (count, recipient) =>
+          count +
+          recipient.messages.reduce(
+            (sum, message) =>
+              sum +
+              (message.kind === "email"
+                ? 1 + message.cc.length + message.bcc.length
+                : 0),
+            0,
+          ),
+        0,
+      );
+    const uniqueRecipients = new Set([
+      ...recipients
+        .filter((recipient) => recipient.eligible)
+        .map((recipient) => recipient.email)
+        .filter(Boolean),
+      ...copyRecipients,
+    ]).size;
     const config = {
-      mode: transport.config.mode,
-      configured: transport.configured,
-      allowed: transport.allowed(user.workspaceId),
+      mode: manualOnly ? ("outbox" as const) : transport.config.mode,
+      configured: manualOnly || transport.configured,
+      allowed: manualOnly || transport.allowed(user.workspaceId),
       from:
-        transport.config.mode === "outbox"
+        manualOnly || transport.config.mode === "outbox"
           ? "Local outbox — no delivery"
           : transport.config.from,
       replyTo: transport.config.replyTo,
@@ -263,8 +360,19 @@ export function registerOutreach(
       updatedAt: item.updatedAt,
       recipients,
       config,
+      schedule,
+      recipientSlots,
+      uniqueRecipients,
     });
-    return { revision, sequenceName: inputText(item.name), recipients, config };
+    return {
+      revision,
+      sequenceName: inputText(item.name),
+      recipients,
+      config,
+      schedule,
+      recipientSlots,
+      uniqueRecipients,
+    };
   };
   app.get(
     "/api/sequences/:id/delivery/preview",
@@ -278,14 +386,18 @@ export function registerOutreach(
     route((req, res) => {
       const user = actor(req),
         item = sequence(user, req);
+      const parsedSteps = stepSchema.safeParse(item.steps);
+      const manualOnly =
+        parsedSteps.success &&
+        parsedSteps.data.every((step) => step.kind !== "email");
       const enrollments = db
         .prepare(
-          "SELECT id,candidate_id AS candidateId,email,name,status,mode,created_at AS createdAt,updated_at AS updatedAt FROM outreach_enrollments WHERE workspace_id=? AND sequence_id=? ORDER BY created_at DESC LIMIT 1000",
+          "SELECT id,candidate_id AS candidateId,CASE WHEN email LIKE 'manual:%' THEN '' ELSE email END AS email,name,status,mode,created_at AS createdAt,updated_at AS updatedAt FROM outreach_enrollments WHERE workspace_id=? AND sequence_id=? ORDER BY created_at DESC LIMIT 1000",
         )
         .all(user.workspaceId, item.id);
       const messages = db
         .prepare(
-          "SELECT m.id,m.enrollment_id AS enrollmentId,m.step_index AS stepIndex,m.subject,m.status,m.due_at AS dueAt,m.attempts,m.provider_event AS providerEvent,m.error,m.updated_at AS updatedAt FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE e.workspace_id=? AND e.sequence_id=? ORDER BY e.created_at DESC,m.step_index LIMIT 1000",
+          "SELECT m.id,m.enrollment_id AS enrollmentId,m.step_index AS stepIndex,m.kind,m.subject,m.status,m.due_at AS dueAt,m.attempts,m.provider_event AS providerEvent,m.error,m.updated_at AS updatedAt FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE e.workspace_id=? AND e.sequence_id=? ORDER BY e.created_at DESC,m.step_index LIMIT 1000",
         )
         .all(user.workspaceId, item.id);
       const events = db
@@ -298,9 +410,9 @@ export function registerOutreach(
         messages,
         events,
         config: {
-          mode: transport.config.mode,
-          configured: transport.configured,
-          allowed: transport.allowed(user.workspaceId),
+          mode: manualOnly ? "outbox" : transport.config.mode,
+          configured: manualOnly || transport.configured,
+          allowed: manualOnly || transport.allowed(user.workspaceId),
           from: transport.config.from,
           replyTo: transport.config.replyTo,
         },
@@ -314,11 +426,18 @@ export function registerOutreach(
         item = sequence(user, req);
       const message = db
         .prepare(
-          "SELECT m.subject,m.body AS text,m.status,e.email,e.name,e.mode FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.id=? AND e.sequence_id=? AND e.workspace_id=?",
+          "SELECT m.kind,m.subject,m.body AS text,m.html,m.cc,m.bcc,m.status,CASE WHEN e.email LIKE 'manual:%' THEN '' ELSE e.email END AS email,e.name,e.mode FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.id=? AND e.sequence_id=? AND e.workspace_id=?",
         )
         .get(String(req.params.messageId), item.id, user.workspaceId);
       if (!message) return fail(404, "Message not found.");
-      res.json({ item: message });
+      const row = message as Row;
+      res.json({
+        item: {
+          ...row,
+          cc: JSON.parse(String(row.cc || "[]")),
+          bcc: JSON.parse(String(row.bcc || "[]")),
+        },
+      });
     }),
   );
   app.post(
@@ -334,12 +453,12 @@ export function registerOutreach(
         })
         .strict()
         .parse(req.body);
-      if (!transport.allowed(user.workspaceId))
+      const plan = preview(user, item);
+      if (!plan.config.allowed)
         return fail(
           409,
           "Live delivery requires a verified sender, HTTPS public URL, and this workspace in the server MAIL_WORKSPACE_IDS allowlist.",
         );
-      const plan = preview(user, item);
       if (input.revision !== plan.revision || input.mode !== plan.config.mode)
         return fail(
           409,
@@ -352,6 +471,23 @@ export function registerOutreach(
         return fail(
           409,
           "No new eligible recipients. Review the preview exclusions.",
+        );
+      if (plan.uniqueRecipients > 100)
+        fail(
+          409,
+          "A launch may include at most 100 distinct recipients, including Cc/Bcc.",
+        );
+      const usedSlots = Number(
+        db
+          .prepare(
+            "SELECT COALESCE(SUM(slots),0) AS n FROM outreach_recipient_budget WHERE workspace_id=? AND created_at>?",
+          )
+          .get(user.workspaceId, clock() - DAY)!.n,
+      );
+      if (usedSlots + plan.recipientSlots > 1000)
+        fail(
+          429,
+          "This workspace has a daily budget of 1,000 scheduled recipient deliveries, including every Cc/Bcc copy and follow-up. Deleted schedules do not reset it.",
         );
       const active = Number(
         db
@@ -378,9 +514,9 @@ export function registerOutreach(
             user.workspaceId,
             item.id,
             recipient.candidateId,
-            recipient.email,
+            recipient.contactKey!,
             recipient.name,
-            transport.config.mode,
+            plan.config.mode,
             transport.config.from,
             transport.config.replyTo,
             transport.publicUrl,
@@ -388,26 +524,65 @@ export function registerOutreach(
             created,
             created,
           );
+          const schedule = plan.schedule ? JSON.stringify(plan.schedule) : null;
+          db.prepare(
+            "UPDATE outreach_enrollments SET schedule=? WHERE id=?",
+          ).run(schedule, id);
           recipient.messages.forEach((message, index) => {
+            const messageId = randomUUID();
             db.prepare(
-              "INSERT INTO outreach_messages(id,enrollment_id,step_index,delay_days,subject,body,unsubscribe_url,status,due_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+              "INSERT INTO outreach_messages(id,enrollment_id,step_index,delay_days,subject,body,unsubscribe_url,status,due_at,updated_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             ).run(
-              randomUUID(),
+              messageId,
               id,
               index,
               message.delayDays,
               message.subject,
-              `${message.text}\n\nUnsubscribe from ${user.workspaceName} recruiting outreach: ${unsubscribeUrl}`,
+              message.kind === "email"
+                ? `${message.text}\n\nUnsubscribe from ${user.workspaceName} recruiting outreach: ${unsubscribeUrl}`
+                : message.text,
               unsubscribeUrl,
               index === 0 ? "pending" : "waiting",
-              index === 0 ? created + message.delayDays * DAY : null,
+              index === 0
+                ? scheduledTime(created + message.delayDays * DAY, schedule)
+                : null,
               created,
+              message.kind,
             );
+            const html = message.html
+              ? `${message.html}${message.kind === "email" ? `<p>Unsubscribe from ${escapeEmailHtml(user.workspaceName)} recruiting outreach: <a href="${escapeEmailHtml(unsubscribeUrl)}">unsubscribe</a></p>` : ""}`
+              : null;
+            db.prepare(
+              "UPDATE outreach_messages SET html=?,cc=?,bcc=? WHERE id=?",
+            ).run(
+              html,
+              JSON.stringify(message.cc),
+              JSON.stringify(message.bcc),
+              messageId,
+            );
+            if (message.kind === "email") {
+              const add = db.prepare(
+                "INSERT INTO outreach_recipients VALUES(?,?,?,?)",
+              );
+              add.run(messageId, user.workspaceId, recipient.email, "to");
+              for (const address of message.cc)
+                add.run(messageId, user.workspaceId, address, "cc");
+              for (const address of message.bcc)
+                add.run(messageId, user.workspaceId, address, "bcc");
+              db.prepare(
+                "INSERT INTO outreach_recipient_budget VALUES(?,?,?,?)",
+              ).run(
+                messageId,
+                user.workspaceId,
+                1 + message.cc.length + message.bcc.length,
+                created,
+              );
+            }
           });
           event(
             id,
             "launched",
-            `${recipient.messages.length} steps scheduled in ${transport.config.mode === "outbox" ? "local outbox mode (no email delivery)" : "live Resend mode"}.`,
+            `${recipient.messages.length} steps scheduled in ${plan.config.mode === "outbox" ? "local outbox/manual mode (no email delivery)" : "live Resend mode"}.`,
           );
           return id;
         }),
@@ -415,7 +590,7 @@ export function registerOutreach(
       res.status(201).json({
         ok: true,
         enrollmentIds: launched,
-        mode: transport.config.mode,
+        mode: plan.config.mode,
       });
     }),
   );
@@ -458,12 +633,18 @@ export function registerOutreach(
             );
             changed++;
           } else if (input.action === "resume" && row.status === "paused") {
+            const hasAutomaticEmail = !!db
+              .prepare(
+                "SELECT id FROM outreach_messages WHERE enrollment_id=? AND kind='email' LIMIT 1",
+              )
+              .get(id);
             if (
-              !transport.allowed(user.workspaceId) ||
-              row.mode !== transport.config.mode ||
-              row.sender !== transport.config.from ||
-              row.reply_to !== transport.config.replyTo ||
-              row.public_url !== transport.publicUrl
+              hasAutomaticEmail &&
+              (!transport.allowed(user.workspaceId) ||
+                row.mode !== transport.config.mode ||
+                row.sender !== transport.config.from ||
+                row.reply_to !== transport.config.replyTo ||
+                row.public_url !== transport.publicUrl)
             )
               return fail(
                 409,
@@ -474,8 +655,23 @@ export function registerOutreach(
               clock() - Number(row.paused_at || clock()),
             );
             db.prepare(
-              "UPDATE outreach_messages SET due_at=due_at+?,updated_at=? WHERE enrollment_id=? AND status IN ('pending','retry')",
-            ).run(delay, clock(), id);
+              "SELECT id,due_at FROM outreach_messages WHERE enrollment_id=? AND status IN ('pending','retry')",
+            )
+              .all(id)
+              .forEach((message) =>
+                db
+                  .prepare(
+                    "UPDATE outreach_messages SET due_at=?,updated_at=? WHERE id=?",
+                  )
+                  .run(
+                    scheduledTime(
+                      Number(message.due_at) + delay,
+                      row.schedule as string | null,
+                    ),
+                    clock(),
+                    message.id,
+                  ),
+              );
             db.prepare(
               "UPDATE outreach_enrollments SET status='active',paused_at=NULL,updated_at=? WHERE id=?",
             ).run(clock(), id);
@@ -503,6 +699,77 @@ export function registerOutreach(
       res.json({ ok: true, changed });
     }),
   );
+  app.post(
+    "/api/sequences/:id/delivery/messages/:messageId/complete",
+    route((req, res) => {
+      const user = actor(req, true),
+        item = sequence(user, req);
+      z.object({ confirmed: z.literal(true) })
+        .strict()
+        .parse(req.body);
+      store.transaction(() => {
+        const message = db
+          .prepare(
+            "SELECT m.*,e.status AS enrollment_status,e.schedule FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.id=? AND e.sequence_id=? AND e.workspace_id=?",
+          )
+          .get(String(req.params.messageId), item.id, user.workspaceId) as
+          Row | undefined;
+        if (!message) fail(404, "Task not found.");
+        if (message!.kind === "email")
+          fail(400, "Automatic email cannot be marked as a manual task.");
+        if (message!.status === "task_completed") return;
+        if (
+          message!.status !== "task_due" ||
+          message!.enrollment_status !== "active"
+        )
+          fail(
+            409,
+            "Only a due task in an active enrollment can be completed.",
+          );
+        db.prepare(
+          "UPDATE outreach_messages SET status='task_completed',updated_at=? WHERE id=?",
+        ).run(clock(), message!.id);
+        event(
+          String(message!.enrollment_id),
+          "task_completed",
+          "A team member confirmed completion outside ArkOffer. No message was sent by this action.",
+          String(message!.id),
+        );
+        advance(message!);
+      });
+      res.json({ ok: true });
+    }),
+  );
+  const advance = (message: Row) => {
+    const enrollment = db
+      .prepare("SELECT status,schedule FROM outreach_enrollments WHERE id=?")
+      .get(message.enrollment_id);
+    if (
+      !enrollment ||
+      !["active", "paused"].includes(String(enrollment.status))
+    )
+      return;
+    const next = db
+      .prepare(
+        "SELECT id,delay_days FROM outreach_messages WHERE enrollment_id=? AND step_index=? AND status='waiting'",
+      )
+      .get(message.enrollment_id, Number(message.step_index) + 1);
+    if (next)
+      db.prepare(
+        "UPDATE outreach_messages SET status='pending',due_at=?,updated_at=? WHERE id=?",
+      ).run(
+        scheduledTime(
+          clock() + Number(next.delay_days) * DAY,
+          enrollment.schedule as string | null,
+        ),
+        clock(),
+        next.id,
+      );
+    else
+      db.prepare(
+        "UPDATE outreach_enrollments SET status='completed',updated_at=? WHERE id=?",
+      ).run(clock(), message.enrollment_id);
+  };
   const publicEnrollment = (req: Request) => {
     const token = String(req.params.token);
     if (!/^[a-f0-9]{64}$/.test(token))
@@ -528,27 +795,48 @@ export function registerOutreach(
         .send(
           unsubscribePage(
             "Unsubscribe from recruiting outreach",
-            `<p>Confirm to stop this hiring workspace from sending you further sequence messages. Opening this page does not change your preferences.</p><form method="post" action="${escapeHtml(req.path)}"><button type="submit" style="padding:12px 20px">Unsubscribe</button></form>`,
+            `<p>Confirm to stop this hiring workspace from sending you further sequence messages. Opening this page does not change your preferences.</p><form method="post" action="${escapeHtml(req.path)}"><p>If you received a Cc or Bcc copy, enter your email to unsubscribe your address. Leave it blank to unsubscribe the primary recipient.</p><label>Your email (optional)<input type="email" name="email" maxlength="254"></label><button type="submit" style="padding:12px 20px">Unsubscribe</button></form>`,
           ),
         );
     }),
   );
   app.post(
     "/api/outreach/unsubscribe/:token",
+    urlencoded({ extended: false, limit: "2kb", parameterLimit: 2 }),
     route((req, res) => {
       const row = publicEnrollment(req);
-      suppress(
-        String(row.workspace_id),
-        String(row.email),
-        "Recipient unsubscribed.",
-      );
+      const supplied =
+        typeof req.body?.email === "string"
+          ? req.body.email.trim().toLowerCase()
+          : "";
+      const parsed = supplied ? emailSchema.safeParse(supplied) : null;
+      if (!supplied)
+        suppress(
+          String(row.workspace_id),
+          String(row.email),
+          "Recipient unsubscribed.",
+        );
+      else if (
+        parsed?.success &&
+        db
+          .prepare(
+            "SELECT r.email FROM outreach_recipients r JOIN outreach_messages m ON m.id=r.message_id WHERE m.enrollment_id=? AND r.email=? LIMIT 1",
+          )
+          .get(row.id, parsed.data)
+      )
+        suppress(
+          String(row.workspace_id),
+          parsed.data,
+          "Recipient unsubscribed.",
+        );
+      // Identical responses for unknown addresses avoid exposing blind-copy membership.
       res.setHeader("Referrer-Policy", "no-referrer");
       res
         .type("html")
         .send(
           unsubscribePage(
             "You’re unsubscribed",
-            "<p>You will receive no further sequence messages from this workspace. A message already accepted by the email provider may still arrive.</p>",
+            "<p>Any matching recipient address has been unsubscribed from this workspace. A message already accepted by the email provider may still arrive.</p>",
           ),
         );
     }),
@@ -593,13 +881,20 @@ export function registerOutreach(
             `Resend reported ${result}.`,
             String(row.id),
           );
-        if (["bounced", "complained", "suppressed"].includes(result))
-          suppress(
-            String(row.workspace_id),
-            String(row.email),
-            `Provider reported ${result}.`,
-          );
-        else if (result === "failed")
+        if (["bounced", "complained", "suppressed"].includes(result)) {
+          const addresses = db
+            .prepare("SELECT email FROM outreach_recipients WHERE message_id=?")
+            .all(row.id);
+          // Provider status is at message level. Without an individual-recipient event, stop the entire approved recipient group rather than retry a potentially suppressed copy.
+          for (const address of addresses.length
+            ? addresses
+            : [{ email: row.email }])
+            suppress(
+              String(row.workspace_id),
+              String(address.email),
+              `Provider reported ${result} for a message including this recipient.`,
+            );
+        } else if (result === "failed")
           halt(
             String(row.enrollment_id),
             "failed",
@@ -653,10 +948,20 @@ export function registerOutreach(
         const row: Row | undefined = store.transaction<Row | undefined>(() => {
           const candidate = db
             .prepare(
-              "SELECT m.*,e.workspace_id,e.email,e.mode,e.sender,e.reply_to,e.public_url,e.status AS enrollment_status,e.candidate_id FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.status IN ('pending','retry') AND m.due_at<=? AND e.status='active' ORDER BY m.due_at,m.id LIMIT 1",
+              "SELECT m.*,e.workspace_id,e.email,e.mode,e.sender,e.reply_to,e.public_url,e.schedule,e.status AS enrollment_status,e.candidate_id FROM outreach_messages m JOIN outreach_enrollments e ON e.id=m.enrollment_id WHERE m.status IN ('pending','retry') AND m.due_at<=? AND e.status='active' ORDER BY m.due_at,m.id LIMIT 1",
             )
             .get(clock()) as Row | undefined;
           if (!candidate) return;
+          const nextTime = scheduledTime(
+            clock(),
+            candidate.schedule as string | null,
+          );
+          if (nextTime > clock()) {
+            db.prepare(
+              "UPDATE outreach_messages SET due_at=?,updated_at=? WHERE id=?",
+            ).run(nextTime, clock(), candidate.id);
+            return { deferred: 1 } as Row;
+          }
           const claimed = db
             .prepare(
               "UPDATE outreach_messages SET status='sending',attempts=attempts+1,first_attempt_at=COALESCE(first_attempt_at,?),claimed_at=?,updated_at=? WHERE id=? AND status IN ('pending','retry')",
@@ -667,10 +972,19 @@ export function registerOutreach(
             : undefined;
         });
         if (!row) break;
+        if (row.deferred) continue;
         const id = String(row.id),
           enrollmentId = String(row.enrollment_id),
           workspaceId = String(row.workspace_id);
-        if (suppressed(workspaceId, String(row.email))) {
+        const recipientsSuppressed = !!db
+          .prepare(
+            "SELECT r.email FROM outreach_recipients r JOIN outreach_suppressions s ON s.workspace_id=r.workspace_id AND s.email=r.email WHERE r.message_id=? LIMIT 1",
+          )
+          .get(id);
+        if (
+          suppressed(workspaceId, String(row.email)) ||
+          recipientsSuppressed
+        ) {
           db.prepare(
             "UPDATE outreach_messages SET status='cancelled',updated_at=? WHERE id=?",
           ).run(clock(), id);
@@ -682,6 +996,18 @@ export function registerOutreach(
             "UPDATE outreach_messages SET status='cancelled',updated_at=? WHERE id=?",
           ).run(clock(), id);
           halt(enrollmentId, "stopped", "Candidate no longer exists.");
+          continue;
+        }
+        if (row.kind !== "email") {
+          db.prepare(
+            "UPDATE outreach_messages SET status='task_due',attempts=0,first_attempt_at=NULL,claimed_at=NULL,updated_at=? WHERE id=?",
+          ).run(clock(), id);
+          event(
+            enrollmentId,
+            "task_due",
+            "Manual task is ready. Complete it outside ArkOffer, then confirm completion to continue the schedule.",
+            id,
+          );
           continue;
         }
         try {
@@ -708,6 +1034,9 @@ export function registerOutreach(
             to: String(row.email),
             subject: String(row.subject),
             text: String(row.body),
+            ...(row.html ? { html: String(row.html) } : {}),
+            cc: JSON.parse(String(row.cc || "[]")),
+            bcc: JSON.parse(String(row.bcc || "[]")),
             unsubscribeUrl: String(row.unsubscribe_url),
             idempotencyKey: `arkoffer/${id}`,
           });
@@ -733,27 +1062,7 @@ export function registerOutreach(
                 : "Accepted by Resend. Delivery is not yet confirmed.",
               id,
             );
-            const enrollment = db
-              .prepare("SELECT status FROM outreach_enrollments WHERE id=?")
-              .get(enrollmentId);
-            if (
-              !enrollment ||
-              !["active", "paused"].includes(String(enrollment.status))
-            )
-              return;
-            const next = db
-              .prepare(
-                "SELECT id,delay_days FROM outreach_messages WHERE enrollment_id=? AND step_index=? AND status='waiting'",
-              )
-              .get(enrollmentId, Number(row.step_index) + 1);
-            if (next)
-              db.prepare(
-                "UPDATE outreach_messages SET status='pending',due_at=?,updated_at=? WHERE id=?",
-              ).run(clock() + Number(next.delay_days) * DAY, clock(), next.id);
-            else
-              db.prepare(
-                "UPDATE outreach_enrollments SET status='completed',updated_at=? WHERE id=?",
-              ).run(clock(), enrollmentId);
+            advance(row);
           });
         } catch (error) {
           const problem =
@@ -783,7 +1092,9 @@ export function registerOutreach(
           ).run(
             status,
             problem.message,
-            retry ? clock() + delay : null,
+            retry
+              ? scheduledTime(clock() + delay, row.schedule as string | null)
+              : null,
             clock(),
             id,
           );

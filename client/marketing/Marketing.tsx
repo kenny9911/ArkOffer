@@ -20,6 +20,8 @@ import {
   Send,
   Sparkles,
   Target,
+  ShieldCheck,
+  History,
   Users,
   X,
 } from "lucide-react";
@@ -31,6 +33,8 @@ import {
   type ProductKey,
 } from "./content";
 import "./marketing.css";
+import { ProductLanding } from "./ProductLanding";
+import { moveMarketingTab } from "./tabNavigation";
 
 const icons = {
   sourcing: Search,
@@ -180,7 +184,6 @@ function Navigation() {
           </div>
           <div className="mk-nav-actions">
             <Link to="/login">Sign in</Link>
-            <Link to="/signup">Start for free</Link>
             <Link className="mk-button mk-dark mk-small" to="/demo">
               Book a demo
             </Link>
@@ -278,6 +281,27 @@ function ProductPreview({
               <ArrowRight size={18} />
             </div>
           )}
+        </div>
+      ) : product === "job-posts" ? (
+        <div className="mk-job-preview">
+          <span className="mk-status">Sample job draft</span>
+          <h3>Product Designer</h3>
+          <p>
+            Help a small product team make complex workflows clear. Work with
+            engineering and research to take ideas from discovery to delivery.
+          </p>
+          <div className="mk-job-preview-note">
+            <strong>Editorial suggestion</strong>Describe the first project and
+            the outcomes the new designer will own.
+          </div>
+          <p>
+            <strong>Missing details to confirm</strong>
+            <br />
+            Location and working pattern · Salary range · Hiring process
+          </p>
+          <Link className="mk-preview-link" to="/signup">
+            Write your first draft <ArrowRight size={16} />
+          </Link>
         </div>
       ) : product === "reports" ? (
         <div className="mk-report-preview">
@@ -414,14 +438,8 @@ function ProductPreview({
         <div className="mk-notes-preview">
           <div className="mk-preview-heading">
             <div>
-              <small>
-                {product === "job-posts" ? "ROLE BRIEF" : "INTERVIEW NOTES"}
-              </small>
-              <h3>
-                {product === "job-posts"
-                  ? "Product Designer"
-                  : "Jordan Lee · Product Designer"}
-              </h3>
+              <small>INTERVIEW NOTES</small>
+              <h3>Jordan Lee · Product Designer</h3>
             </div>
             <span className="mk-avatar">JL</span>
           </div>
@@ -439,21 +457,12 @@ function ProductPreview({
           <div className="mk-note-body">
             {tab === "Summary" ? (
               <>
-                <h4>
-                  {product === "job-posts"
-                    ? "The opportunity"
-                    : "Experience & background"}
-                </h4>
+                <h4>Experience & background</h4>
                 <p>
-                  {product === "job-posts"
-                    ? "Help a small team turn complex workflows into thoughtful product experiences."
-                    : "Jordan shared their approach to simplifying complex workflows, from early research through to the final experience."}
+                  Jordan shared their approach to simplifying complex workflows,
+                  from early research through to the final experience.
                 </p>
-                <h4>
-                  {product === "job-posts"
-                    ? "What you’ll work on"
-                    : "What matters in the next role"}
-                </h4>
+                <h4>What matters in the next role</h4>
                 <ul>
                   <li>Work closely with a collaborative product team.</li>
                   <li>Make decisions with real customer context.</li>
@@ -497,13 +506,21 @@ function ProductPreview({
 function ProductExplorer() {
   const [active, setActive] = useState<ProductKey>("sourcing");
   const current = products[active];
+  const featuredProducts: ProductKey[] = [
+    "sourcing",
+    "application-review",
+    "screening",
+    "interview-notes",
+    "reports",
+    "fillmore",
+  ];
   return (
     <section className="mk-section mk-explorer" id="platform">
       <Eyebrow>How it works</Eyebrow>
       <h2>
-        More context.
+        AI assistance for every
         <br />
-        Less busywork.
+        step of recruiting.
       </h2>
       <p className="mk-section-intro">
         Bring the moving parts of your hiring process into one shared workspace,
@@ -514,12 +531,23 @@ function ProductExplorer() {
         role="tablist"
         aria-label="Explore the platform"
       >
-        {productKeys.slice(0, 6).map((key) => {
+        {featuredProducts.map((key) => {
           const Icon = icons[key];
           return (
             <button
               role="tab"
               aria-selected={active === key}
+              tabIndex={active === key ? 0 : -1}
+              id={`product-tab-${key}`}
+              aria-controls="platform-preview"
+              onKeyDown={(event) =>
+                moveMarketingTab(
+                  event,
+                  featuredProducts.indexOf(key),
+                  featuredProducts.length,
+                  (index) => setActive(featuredProducts[index]),
+                )
+              }
               key={key}
               className={active === key ? "active" : ""}
               onClick={() => setActive(key)}
@@ -530,7 +558,12 @@ function ProductExplorer() {
           );
         })}
       </div>
-      <div className={`mk-product-panel mk-panel-${active}`}>
+      <div
+        id="platform-preview"
+        role="tabpanel"
+        aria-labelledby={`product-tab-${active}`}
+        className={`mk-product-panel mk-panel-${active}`}
+      >
         <div className="mk-product-panel-copy">
           <Eyebrow>{current.name}</Eyebrow>
           <h3>{current.short}</h3>
@@ -602,12 +635,26 @@ function Home() {
         ))}
       </div>
       <ProductExplorer />
+      <section className="mk-home-coworker">
+        <div>
+          <h2>Meet your recruiting coworker.</h2>
+          <p>Keep the work moving with ArkOffer.</p>
+          <Link to="/fillmore" className="mk-button mk-dark">
+            Explore the coworker
+          </Link>
+        </div>
+        <img
+          src="/marketing/coworker.webp"
+          alt="A person in a bright green suit working on a laptop"
+          loading="lazy"
+        />
+      </section>
       <section className="mk-context-section">
         <Eyebrow>Your team, on the same page</Eyebrow>
         <h2>
-          The right context.
+          Your AI teammate, with the context
           <br />
-          At every step.
+          to support every step of hiring.
         </h2>
         <Link to="/signup" className="mk-button mk-dark">
           Try ArkOffer <ArrowUpRight size={17} />
@@ -636,6 +683,38 @@ function Home() {
           <div className="mk-orbit mk-orbit-two" />
         </div>
       </section>
+      <section className="mk-section mk-home-impact">
+        <div>
+          <Eyebrow>From first search to final offer</Eyebrow>
+          <h2>A connected view of your hiring process.</h2>
+          <p className="mk-section-intro">
+            Bring candidate context, conversations and team feedback together,
+            so the work you do at one stage informs the next.
+          </p>
+          <ProductPreview product="reports" />
+        </div>
+        <div>
+          {[
+            [
+              "More time for candidates",
+              "Prepare interviews, organize notes and review draft outreach with the role context close at hand.",
+            ],
+            [
+              "A clearer path through the funnel",
+              "Build a shortlist, review applications and organize consistent screening experiences in one workspace.",
+            ],
+            [
+              "Evidence behind the insights",
+              "Turn accessible interview transcripts into custom report views with quotations you can inspect.",
+            ],
+          ].map(([title, body]) => (
+            <article key={title}>
+              <h3>{title}</h3>
+              <p>{body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
       <section className="mk-section mk-why">
         <div>
           <Eyebrow>Why ArkOffer</Eyebrow>
@@ -648,29 +727,12 @@ function Home() {
             The work is human. Give your team the space, structure, and shared
             context to do it well.
           </p>
-          <div className="mk-why-art">
-            <div className="mk-paper mk-paper-back">
-              <FileText />
-              <span>Role requirements</span>
-            </div>
-            <div className="mk-paper mk-paper-front">
-              <span className="mk-small-brand">ArkOffer</span>
-              <h4>
-                Ready for the
-                <br />
-                next conversation.
-              </h4>
-              <div>
-                <Check /> Shared context
-              </div>
-              <div>
-                <Check /> Clear criteria
-              </div>
-              <div>
-                <Check /> A considered decision
-              </div>
-            </div>
-          </div>
+          <img
+            className="mk-why-image"
+            src="/marketing/context.webp"
+            alt="A geometric visualization of connected recruiting context"
+            loading="lazy"
+          />
         </div>
         <div className="mk-accordion">
           {whyItems.map(([title, body], i) => (
@@ -691,6 +753,40 @@ function Home() {
               {why === i && <p>{body}</p>}
             </div>
           ))}
+        </div>
+      </section>
+      <section className="mk-security-section">
+        <Eyebrow>AI assistance with human guardrails</Eyebrow>
+        <h2>
+          Shared context.
+          <br />
+          Clear access and control.
+        </h2>
+        <div className="mk-security-grid">
+          <div>
+            <ShieldCheck size={30} />
+            <h3>Control access</h3>
+            <p>
+              Conversation permissions follow the source when it appears in
+              notes, reviews and reports.
+            </p>
+          </div>
+          <div>
+            <CheckCheck size={30} />
+            <h3>Review before applying</h3>
+            <p>
+              Inspect AI suggestions and choose which changes to apply to your
+              records.
+            </p>
+          </div>
+          <div>
+            <History size={30} />
+            <h3>Keep the evidence</h3>
+            <p>
+              Revisit source quotations, saved drafts and recorded workflow
+              activity.
+            </p>
+          </div>
         </div>
       </section>
       <section className="mk-section mk-home-resources">
@@ -776,68 +872,6 @@ function CallToAction() {
       <p>Give your team a shared place to make it happen.</p>
       <Buttons />
     </section>
-  );
-}
-
-function ProductLanding({ product }: { product: ProductKey }) {
-  const data = products[product];
-  return (
-    <>
-      <section className="mk-product-hero mk-section">
-        <Eyebrow>{data.eyebrow}</Eyebrow>
-        <h1>
-          {data.title.split("\n").map((line, i) => (
-            <span key={line}>
-              {i > 0 && <br />}
-              {line}
-            </span>
-          ))}
-        </h1>
-        <p>{data.description}</p>
-        <Buttons />
-        <div className={`mk-landing-preview mk-panel-${product}`}>
-          <ProductPreview product={product} large />
-        </div>
-      </section>
-      <section className="mk-section mk-feature-section">
-        <Eyebrow>Built around your workflow</Eyebrow>
-        <h2>{data.short}</h2>
-        <div className="mk-feature-grid">
-          {data.features.map(([title, description], i) => (
-            <div key={title}>
-              <span className="mk-feature-number">0{i + 1}</span>
-              <h3>{title}</h3>
-              <p>{description}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="mk-section mk-connected">
-        <Eyebrow>One connected workspace</Eyebrow>
-        <h2>
-          There’s a next step
-          <br />
-          for every conversation.
-        </h2>
-        <div className="mk-connected-grid">
-          {productKeys
-            .filter((key) => key !== product)
-            .slice(0, 4)
-            .map((key) => {
-              const Icon = icons[key];
-              return (
-                <Link to={`/${key}`} key={key}>
-                  <Icon size={25} />
-                  <h3>{products[key].name}</h3>
-                  <p>{products[key].short}</p>
-                  <ArrowUpRight size={20} />
-                </Link>
-              );
-            })}
-        </div>
-      </section>
-      <CallToAction />
-    </>
   );
 }
 
@@ -1875,7 +1909,14 @@ export function Marketing() {
   }, [path, article, product]);
   let page: React.ReactNode;
   if (path === "/") page = <Home />;
-  else if (products[product]) page = <ProductLanding product={product} />;
+  else if (products[product])
+    page = (
+      <ProductLanding
+        key={product}
+        product={product}
+        Preview={ProductPreview}
+      />
+    );
   else if (path === "/pricing") page = <Pricing />;
   else if (article) page = <ArticleDetail article={article} />;
   else if (path.startsWith("/resources")) page = <Resources />;
@@ -1894,7 +1935,9 @@ export function Marketing() {
   else if (path === "/integrations") page = <Integrations />;
   else page = <Utility path={path} />;
   return (
-    <div className="marketing">
+    <div
+      className={`marketing ${["sourcing", "screening", "interview-notes", "outreach"].includes(product) ? "mk-public-dark" : product === "application-review" ? "mk-public-mint" : ""}`}
+    >
       <a className="mk-skip-link" href="#mk-main">
         Skip to content
       </a>

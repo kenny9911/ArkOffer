@@ -26,14 +26,20 @@ type Recipient = {
   reason: string;
   messages: {
     step: number;
+    kind: string;
     subject: string;
     text: string;
+    html?: string | null;
+    cc: string[];
+    bcc: string[];
     delayDays: number;
   }[];
 };
 type Preview = {
   revision: string;
   sequenceName: string;
+  recipientSlots?: number;
+  uniqueRecipients?: number;
   config: DeliveryConfig;
   recipients: Recipient[];
 };
@@ -49,6 +55,7 @@ type Message = {
   id: string;
   enrollmentId: string;
   stepIndex: number;
+  kind: string;
   subject: string;
   status: string;
   dueAt: number | null;
@@ -72,6 +79,8 @@ const when = (value: number | null) =>
   value ? new Date(value).toLocaleString() : "After previous step";
 const statusLabel = (status: string) =>
   ({
+    task_due: "Manual task ready · awaiting your completion",
+    task_completed: "Manual task completed by team",
     outbox: "Local outbox · not delivered",
     accepted: "Provider accepted · awaiting delivery",
     unknown: "Delivery unknown · no retry",
@@ -117,6 +126,9 @@ export default function SequenceDelivery({
     id: string;
     subject: string;
     text: string;
+    html?: string | null;
+    cc?: string[];
+    bcc?: string[];
     email: string;
     status: string;
   } | null>(null);
@@ -261,6 +273,13 @@ export default function SequenceDelivery({
                 <strong>{eligible.length} eligible recipients</strong> ·{" "}
                 {preview.recipients.length - eligible.length} excluded
               </p>
+              <p className="business-help">
+                {preview.uniqueRecipients ?? eligible.length} distinct addresses
+                including copies · {preview.recipientSlots ?? 0} scheduled
+                recipient deliveries across all steps. Cc addresses are visible
+                to recipients; Bcc addresses stay hidden from other recipients.
+                Review every copy below.
+              </p>
               <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
                 {preview.recipients.map((recipient) => (
                   <details
@@ -299,6 +318,29 @@ export default function SequenceDelivery({
                             : `${step.delayDays} days after previous step`}
                         </p>
                         <strong>{step.subject}</strong>
+                        {!!step.cc?.length && (
+                          <p>
+                            <b>Cc:</b> {step.cc.join(", ")}
+                          </p>
+                        )}
+                        {!!step.bcc?.length && (
+                          <p>
+                            <b>Bcc:</b> {step.bcc.join(", ")}
+                          </p>
+                        )}
+                        {step.html && (
+                          <div
+                            className="sequence-formatted-preview"
+                            dangerouslySetInnerHTML={{ __html: step.html }}
+                          />
+                        )}
+                        {step.kind && step.kind !== "email" && (
+                          <p className="business-help">
+                            Manual {step.kind.replaceAll("_", " ")} task. No
+                            automatic contact; complete this outside ArkOffer
+                            and confirm in Activity.
+                          </p>
+                        )}
                         <p
                           style={{
                             whiteSpace: "pre-wrap",
@@ -310,7 +352,8 @@ export default function SequenceDelivery({
                       </div>
                     ))}
                     <small className="business-muted">
-                      Each message includes a working unsubscribe link.
+                      Automatic emails include a working unsubscribe link.
+                      Manual steps wait for explicit completion.
                     </small>
                   </details>
                 ))}
@@ -336,8 +379,8 @@ export default function SequenceDelivery({
                     />
                     <span>
                       {config?.mode === "resend"
-                        ? `I reviewed the ${eligible.length} recipients and messages and authorize sending this sequence on its schedule.`
-                        : `I reviewed the ${eligible.length} recipients and authorize running this schedule in the local outbox. No emails will be delivered.`}
+                        ? `I reviewed the ${eligible.length} candidate recipients, all Cc/Bcc copies and messages, and authorize sending this sequence on its schedule.`
+                        : `I reviewed the ${eligible.length} candidate recipients, all Cc/Bcc copies and messages, and authorize running this schedule in the local outbox. No emails will be delivered.`}
                     </span>
                   </label>
                   <div className="business-dialog-actions">
@@ -543,6 +586,28 @@ export default function SequenceDelivery({
                           ? ` · ${item.attempts} attempts`
                           : ""}
                       </p>
+                      {item.status === "task_due" &&
+                        admin &&
+                        enrollment.status === "active" && (
+                          <Button
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() =>
+                              void run(async () => {
+                                await api(
+                                  `${path}/messages/${item.id}/complete`,
+                                  json("POST", { confirmed: true }),
+                                );
+                                await reload();
+                                setNotice(
+                                  "Task completion recorded. The next step follows its approved schedule.",
+                                );
+                              })
+                            }
+                          >
+                            Confirm task completed outside ArkOffer
+                          </Button>
+                        )}
                       {item.error && (
                         <p role="status" className="business-alert">
                           {item.error}
@@ -556,6 +621,22 @@ export default function SequenceDelivery({
                             borderRadius: 8,
                           }}
                         >
+                          {!!message.cc?.length && (
+                            <p>
+                              <b>Cc:</b> {message.cc.join(", ")}
+                            </p>
+                          )}
+                          {!!message.bcc?.length && (
+                            <p>
+                              <b>Bcc:</b> {message.bcc.join(", ")}
+                            </p>
+                          )}
+                          {message.html && (
+                            <div
+                              className="sequence-formatted-preview"
+                              dangerouslySetInnerHTML={{ __html: message.html }}
+                            />
+                          )}
                           <p
                             style={{
                               whiteSpace: "pre-wrap",

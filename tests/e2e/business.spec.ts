@@ -39,7 +39,7 @@ test.beforeEach(async ({ page, baseURL }) => {
 test("candidate creation, quoted CSV import, saved searches and manual review persist", async ({
   page,
 }) => {
-  await page.goto("/app/sourcing");
+  await page.goto("/app/candidates");
   await page
     .getByRole("button", { name: "Add candidate", exact: true })
     .first()
@@ -123,53 +123,56 @@ test("draft sequences save multiple steps and candidate enrollment without sendi
   });
   await page.goto("/app/sequences");
   await page
-    .getByRole("button", { name: "Create sequence", exact: true })
+    .getByRole("link", { name: "New sequence", exact: true })
     .first()
     .click();
-  await page.getByLabel("Sequence name").fill("Engineering introduction");
+  await page.getByLabel("Sequence title").fill("Engineering introduction");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page
     .getByLabel("Description", { exact: true })
     .fill("Personal outreach draft");
-  await page.getByLabel("Subject", { exact: true }).fill("An introduction");
+  await page.getByRole("tab", { name: "Steps", exact: true }).click();
   await page
-    .getByRole("textbox", { name: "Message", exact: true })
+    .getByLabel("Step 1 subject", { exact: true })
+    .fill("An introduction");
+  await page
+    .getByLabel("Step 1 body", { exact: true })
     .fill("Hello Avery, I would love to introduce our team.");
-  await page.getByRole("button", { name: "Add step", exact: true }).click();
-  await page.getByLabel("Subject", { exact: true }).nth(1).fill("Following up");
+  await page.getByRole("button", { name: "New step", exact: true }).click();
+  await page.getByLabel("Step 2 subject", { exact: true }).fill("Following up");
   await page
-    .getByRole("textbox", { name: "Message", exact: true })
-    .nth(1)
+    .getByLabel("Step 2 body", { exact: true })
     .fill("A short follow-up with more context.");
-  await page.getByLabel("Days after the previous step").fill("5");
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page.getByLabel("Step 2 delay").selectOption("5");
   await page
-    .getByRole("button", { name: "Enroll candidates", exact: true })
+    .getByRole("button", { name: "Candidates (0)", exact: true })
     .click();
   await page
     .getByRole("checkbox", { name: "Avery Example avery@example.com" })
     .check();
   await page
-    .getByRole("button", { name: "Save enrollment", exact: true })
+    .getByRole("dialog")
+    .getByRole("button", { name: "Done", exact: true })
     .click();
-  await page.reload();
-  await expect(
-    page.getByText("messages are not sent.", { exact: false }),
-  ).toBeVisible();
-  const row = page
-    .getByRole("row")
-    .filter({ hasText: "Engineering introduction" });
-  await expect(row).toContainText("draft");
-  await expect(row.getByRole("cell").nth(2)).toHaveText("2");
-  await expect(row.getByRole("cell").nth(3)).toHaveText("1");
   await page
-    .getByRole("button", { name: "Engineering introduction", exact: true })
+    .getByRole("button", { name: "Save sequence", exact: true })
     .click();
-  await expect(page.getByLabel("Days after the previous step")).toHaveValue(
-    "5",
+  await expect(page).toHaveURL(/\/app\/sequences\/[a-f0-9-]+$/);
+  await page.reload();
+  await expect(page.getByLabel("Step 2 delay")).toHaveValue("5");
+  await expect(page.getByLabel("Step 2 body", { exact: true })).toHaveValue(
+    "A short follow-up with more context.",
   );
   await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }).nth(1),
-  ).toHaveValue("A short follow-up with more context.");
+    page.getByRole("button", { name: "Candidates (1)", exact: true }),
+  ).toBeVisible();
+  const items = (await (await page.request.get("/api/sequences")).json()).items;
+  expect(items[0].steps).toHaveLength(2);
+  expect(items[0].enrolledCandidateIds).toHaveLength(1);
+  const activity = await (
+    await page.request.get(`/api/sequences/${items[0].id}/delivery`)
+  ).json();
+  expect(activity.enrollments).toHaveLength(0);
 });
 
 test("job descriptions and manual application decisions are editable and persistent", async ({
