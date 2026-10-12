@@ -1,0 +1,36 @@
+{
+  "reference": "https://www.metaview.ai/",
+  "retrieved": "2026-10-12",
+  "assets": [
+    {
+      "file": "hero.webp",
+      "source": "https://www.metaview.ai/_next/static/immutable/media/homepage-hero.11c-o30yeryar.webp",
+      "sha256": "af5e57429208d1df5afe35b5b6a0142f65d36f2ce6c52b0b0b8154688573e695",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "euclid-regular.woff2",
+      "source": "https://www.metaview.ai/_next/static/immutable/media/EuclidCircularA-Regular.0pepmw53n57e_.woff2",
+      "sha256": "f885ce17b8429997540f3dca309e8ef03aaf95bd495eb8e867a681d4420cd287",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "euclid-medium.woff2",
+      "source": "https://www.metaview.ai/_next/static/immutable/media/EuclidCircularA-Medium.3of8wrlnvqad3.woff2",
+      "sha256": "c99f02259ea92d9835e6ca38267f794a4503f65ec72db604d73818936834a000",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "euclid-semibold.woff2",
+      "source": "https://www.metaview.ai/_next/static/immutable/media/EuclidCircularA-Semibold.1z5cv60uqelkw.woff2",
+      "sha256": "69ee124749e4d023e907478a661237caddda759cc3f8b21a3ffbc19ab1f2bd2c",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    },
+    {
+      "file": "onsite-mono.woff2",
+      "source": "https://www.metaview.ai/_next/static/immutable/media/OnsiteMono-Regular.007n0jx5wrha5.woff2",
+      "sha256": "32c9c6f370b58ea9ec8e457acf257d309df5e39554f2d83078107900c8dcd015",
+      "attribution": "Metaview public website reference asset; original ownership retained. Included for requested reference reconstruction, no license claim."
+    }
+  ]
+}
