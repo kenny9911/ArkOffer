@@ -1,0 +1,46 @@
+{
+  "name": "arkoffer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "NODE_ENV=production node --env-file-if-exists=.env --import tsx server/index.ts",
+    "test": "tsx --test tests/server/*.test.ts",
+    "test:e2e": "playwright test",
+    "check": "npm run test && npm run build",
+    "dev:api": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "format:check": "prettier --check client server tests *.ts *.json .github/workflows/ci.yml"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "express": "^5.3.0",
+    "lucide-react": "^0.577.0",
+    "multer": "^2.0.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.13.2",
+    "unpdf": "^1.8.1",
+    "yauzl": "^3.4.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "prettier": "^3.9.10",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}
