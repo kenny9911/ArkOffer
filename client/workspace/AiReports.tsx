@@ -1613,6 +1613,9 @@ export default function AiReports() {
                 <ReportCollaboration
                   key={detail.item.id}
                   viewId={detail.item.id}
+                  revision={detail.item.revision}
+                  name={detail.item.name}
+                  runs={detail.runs}
                   open={sharingOpen}
                   onChanged={async () => {
                     await Promise.all([loadDetail(selected), loadIndex()]);

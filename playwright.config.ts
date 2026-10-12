@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 import { existsSync } from "node:fs";
 const localChrome =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+// Worker processes reload this file; keep their fixture DB path tied to this run.
+const e2eDataDir =
+  process.env.ARKOFFER_E2E_DATA_DIR ||
+  (process.env.ARKOFFER_E2E_DATA_DIR = `/tmp/arkoffer-e2e-${process.pid}`);
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -35,7 +39,7 @@ export default defineConfig({
     env: {
       PORT: "3412",
       HOST: "127.0.0.1",
-      DATA_DIR: `/tmp/arkoffer-e2e-${process.pid}`,
+      DATA_DIR: e2eDataDir,
       APP_ORIGIN: "http://127.0.0.1:3412",
       NODE_ENV: "test",
       TRUST_PROXY: "1",

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Bell, Share2, Mail, X } from "lucide-react";
 import "./report-collaboration.css";
+import ReportPublicSharing, {
+  type PublicShareRun,
+} from "./ReportPublicSharing";
 type Sharing = {
   revision: number;
   permission: string;
@@ -93,10 +96,16 @@ export default function ReportCollaboration({
   viewId,
   open,
   onChanged,
+  revision,
+  name,
+  runs,
 }: {
   viewId: string;
   open: number;
   onChanged: () => Promise<unknown>;
+  revision: number;
+  name: string;
+  runs: PublicShareRun[];
 }) {
   const sharingPanel = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -545,6 +554,14 @@ export default function ReportCollaboration({
           <p>Loading subscription…</p>
         )}
       </details>
+      {sharing?.permission === "owner" && (
+        <ReportPublicSharing
+          viewId={viewId}
+          revision={revision}
+          name={name}
+          runs={runs}
+        />
+      )}
     </section>
   );
 }

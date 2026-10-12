@@ -2,6 +2,8 @@
 
 This continues the [Screening and Reports reconstruction](SCREENING_REPORTS_UPDATE.md), using its signed-in observations and static REA evidence. It adds independent full-stack implementations of selected missing workflows. It does **not** establish complete Metaview parity or live provider operation.
 
+> The later [recording, adaptive interview and public report update](SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md) supersedes this delivery’s no-archive, fixed interview and no-public-report limitations.
+
 ## Screening invitations and reminders
 
 The saved screening's Outreach tab includes candidate-library selection and manually entered recipients, editable subject/body, supported personalization variables and reminder timing. A reviewer first prepares an immutable preview and then explicitly confirms the batch. Any changed screening revision, selected candidate, sender configuration or stale preview requires another review. Owners manage delivery; workspace members can inspect its status.

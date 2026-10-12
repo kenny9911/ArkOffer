@@ -29,9 +29,11 @@ if (
   app.locals.reportViews.start();
   app.locals.screeningOutreach.start();
   app.locals.liveInterviews.start();
+  app.locals.screeningRecordings.start();
   const shutdown = () =>
     server.close(async () => {
       await app.locals.liveInterviews.stop();
+      await app.locals.screeningRecordings.stop();
       await app.locals.screeningOutreach.stop();
       await app.locals.reportViews.stop();
       await app.locals.slack.stop();

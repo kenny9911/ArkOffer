@@ -51,6 +51,8 @@ type Snapshot = {
     language?: string;
     interviewMode?: string;
     cameraPolicy?: string;
+    recordingEnabled?: boolean;
+    recordingRetentionDays?: number;
     welcomeMessage?: string;
     completionMessage?: string;
   };
@@ -65,6 +67,11 @@ export type LiveInterviewOptions = {
   env?: NodeJS.ProcessEnv;
   adapter?: LiveInterviewAdapter;
   now?: () => number;
+  recording?: {
+    status: (workspaceId: string) => { available: boolean };
+    startSession: (sessionId: string, consent: boolean) => Promise<unknown>;
+    stopSession: (sessionId: string) => Promise<unknown>;
+  };
 };
 class LiveError extends Error {
   constructor(
@@ -291,7 +298,14 @@ function publicSession(store: Store, row: Session) {
     consentAt: row.consent_at,
     endedAt: row.ended_at,
     endReason: row.end_reason,
-    recording: false,
+    recording:
+      JSON.parse(
+        String(
+          store.db
+            .prepare("SELECT snapshot FROM screening_publications WHERE id=?")
+            .get(row.publication_id)?.snapshot ?? "{}",
+        ),
+      ).setup?.recordingEnabled === true,
     events: events.map((event) => ({
       id: event.id,
       sequence: event.sequence,
@@ -308,13 +322,13 @@ function defaultAdapter(env: NodeJS.ProcessEnv): LiveInterviewAdapter {
     url,
     env.LIVEKIT_API_KEY,
     env.LIVEKIT_API_SECRET,
-    { requestTimeout: 10 },
+    { requestTimeout: 10, failover: false },
   );
   const dispatch = new AgentDispatchClient(
     url,
     env.LIVEKIT_API_KEY,
     env.LIVEKIT_API_SECRET,
-    { requestTimeout: 10 },
+    { requestTimeout: 10, failover: false },
   );
   return {
     async createRoom(name) {
@@ -400,8 +414,18 @@ export function registerLiveInterviewCallbacks(
         .object({
           eventId: z.uuid(),
           sessionId: z.uuid(),
-          sequence: z.number().int().min(1).max(200),
-          kind: z.enum(["ready", "answer", "agent", "ended", "error"]),
+          sequence: z.number().int().min(1).max(400),
+          kind: z.enum([
+            "ready",
+            "answer",
+            "agent",
+            "ended",
+            "error",
+            "followup-question",
+            "followup-answer",
+            "skip",
+            "followup-skip",
+          ]),
           questionId: z.uuid().optional(),
           text: z.string().trim().min(1).max(10_000).optional(),
         })
@@ -446,8 +470,16 @@ export function registerLiveInterviewCallbacks(
             .get(session.publication_id)!.snapshot,
         ),
       ) as Snapshot;
+      const transcriptKinds = [
+        "answer",
+        "agent",
+        "followup-question",
+        "followup-answer",
+        "skip",
+        "followup-skip",
+      ];
       if (
-        ["answer", "agent"].includes(input.kind) &&
+        transcriptKinds.includes(input.kind) &&
         (!input.text ||
           !input.questionId ||
           !snapshot.questions.some(
@@ -456,18 +488,68 @@ export function registerLiveInterviewCallbacks(
       )
         return fail(400, "Transcript must reference a published question.");
       if (
-        !["answer", "agent"].includes(input.kind) &&
+        !transcriptKinds.includes(input.kind) &&
         (input.text || input.questionId)
       )
         return fail(400, "State callbacks cannot contain transcript data.");
+      if (
+        ["answer", "skip"].includes(input.kind) &&
+        store.db
+          .prepare(
+            "SELECT id FROM screening_live_events WHERE session_id=? AND question_id=? AND kind IN ('answer','skip')",
+          )
+          .get(session.id, input.questionId!)
+      ) {
+        return fail(
+          409,
+          "A published question can be answered or skipped only once.",
+        );
+      }
+      if (input.kind.startsWith("followup-")) {
+        const question = snapshot.questions.find(
+          (item) => item.id === input.questionId,
+        )!;
+        if (question.type !== "text" || question.followUp !== true)
+          return fail(
+            400,
+            "This published question does not allow a follow-up.",
+          );
+        const turns = store.db
+          .prepare(
+            "SELECT kind FROM screening_live_events WHERE session_id=? AND question_id=? ORDER BY sequence",
+          )
+          .all(session.id, input.questionId!);
+        const kinds = turns.map((turn) => turn.kind);
+        if (input.kind === "followup-question") {
+          if (
+            !kinds.includes("answer") ||
+            kinds.includes("followup-question") ||
+            kinds.includes("skip") ||
+            input.text!.length > 600
+          )
+            return fail(
+              409,
+              "Only one bounded follow-up may follow an answered question.",
+            );
+        } else if (
+          !kinds.includes("followup-question") ||
+          kinds.includes("followup-answer") ||
+          kinds.includes("followup-skip")
+        ) {
+          return fail(
+            409,
+            "A follow-up can be answered or skipped only once, after it is asked.",
+          );
+        }
+      }
       const usage = store.db
         .prepare(
           "SELECT COUNT(*) count,COALESCE(SUM(LENGTH(text)),0) bytes,COALESCE(MAX(sequence),0) sequence FROM screening_live_events WHERE session_id=?",
         )
         .get(session.id)!;
       if (
-        Number(usage.count) >= 200 ||
-        Number(usage.bytes) + (input.text?.length || 0) > 100_000
+        Number(usage.count) >= 400 ||
+        Number(usage.bytes) + (input.text?.length || 0) > 200_000
       )
         return fail(413, "Interview transcript limit reached.");
       if (input.sequence !== Number(usage.sequence) + 1)
@@ -548,6 +630,7 @@ export function registerLiveInterviews(
               "UPDATE screening_live_sessions SET state='ended',ended_at=?,end_reason='expired-or-revoked' WHERE id=?",
             )
             .run(new Date(now()).toISOString(), row.id);
+        await options.recording?.stopSession(row.id).catch(() => {});
         await getAdapter().deleteRoom(row.room_name);
         store.db
           .prepare(
@@ -578,13 +661,20 @@ export function registerLiveInterviews(
       const pub = publication(store, String(req.params.token), now()),
         snapshot = JSON.parse(pub.snapshot) as Snapshot;
       const configured = capability(pub.workspace_id);
+      const recording = snapshot.setup?.recordingEnabled === true;
+      const recordingReady =
+        !recording ||
+        options.recording?.status(pub.workspace_id).available === true;
       res.setHeader("Cache-Control", "no-store");
       res.json({
         available:
-          configured.available && snapshot.setup?.interviewMode === "live",
+          configured.available &&
+          recordingReady &&
+          snapshot.setup?.interviewMode === "live",
         enabled: snapshot.setup?.interviewMode === "live",
         cameraPolicy: snapshot.setup?.cameraPolicy || "optional",
-        recording: false,
+        recording,
+        recordingRetentionDays: snapshot.setup?.recordingRetentionDays || 30,
         maxMinutes: 30,
         previousSession: (() => {
           const row = store.db
@@ -594,9 +684,11 @@ export function registerLiveInterviews(
             .get(pub.id, pub.workspace_id) as Session | undefined;
           return row ? publicSession(store, row) : null;
         })(),
-        reason: configured.available
-          ? ""
-          : "Live interviewing is not configured for this hiring team. You can complete the questionnaire below.",
+        reason: !recordingReady
+          ? "Interview recording is not configured for this hiring team. You can complete the questionnaire below."
+          : configured.available
+            ? ""
+            : "Live interviewing is not configured for this hiring team. You can complete the questionnaire below.",
       });
     }),
   );
@@ -610,6 +702,7 @@ export function registerLiveInterviews(
           requestId: z.uuid(),
           consent: z.literal(true),
           cameraEnabled: z.boolean(),
+          recordingConsent: z.literal(true).optional(),
         })
         .strict()
         .parse(req.body);
@@ -621,6 +714,15 @@ export function registerLiveInterviews(
           503,
           "Live interviewing is not enabled for this hiring team.",
         );
+      if (snapshot.setup?.recordingEnabled) {
+        if (!input.recordingConsent)
+          return fail(400, "Consent to interview recording before joining.");
+        if (!options.recording?.status(pub.workspace_id).available)
+          return fail(
+            503,
+            "Interview recording is unavailable. Complete the questionnaire or contact the hiring team.",
+          );
+      }
       const policy = snapshot.setup?.cameraPolicy || "optional";
       if (
         (policy === "required" && !input.cameraEnabled) ||
@@ -703,6 +805,13 @@ export function registerLiveInterviews(
         );
       try {
         await getAdapter().createRoom(room);
+        // Consent is validated before allocating a room or starting capture.
+        if (snapshot.setup?.recordingEnabled)
+          await options.recording!.startSession(
+            id,
+            input.recordingConsent === true,
+          );
+        publication(store, String(req.params.token), now());
         const config = liveConfig(env);
         // Never send private screening context, evaluation rubric, hiring decisions, or account secrets.
         await getAdapter().dispatch(
@@ -719,12 +828,13 @@ export function registerLiveInterviews(
             welcomeMessage: snapshot.setup?.welcomeMessage || "",
             completionMessage: snapshot.setup?.completionMessage || "",
             questions: snapshot.questions.map(
-              ({ id, prompt, type, options, required }) => ({
+              ({ id, prompt, type, options, required, followUp }) => ({
                 id,
                 prompt,
                 type,
                 options,
                 required,
+                followUp: followUp === true,
               }),
             ),
           }),
@@ -750,6 +860,7 @@ export function registerLiveInterviews(
           ),
         });
       } catch {
+        await options.recording?.stopSession(id).catch(() => {});
         try {
           await getAdapter().deleteRoom(room);
         } catch {
@@ -800,6 +911,7 @@ export function registerLiveInterviews(
         .run(new Date(now()).toISOString(), row.id);
       let cleanupPending = false;
       try {
+        await options.recording?.stopSession(row.id).catch(() => {});
         await getAdapter().deleteRoom(row.room_name);
         store.db
           .prepare(
@@ -827,7 +939,7 @@ export function registerLiveInterviews(
       if (!user) return fail(401, "Sign in to review interviews.");
       const response = store.db
         .prepare(
-          "SELECT publication_id,answers FROM screening_responses WHERE id=? AND screening_id=? AND workspace_id=?",
+          "SELECT publication_id,answers,live_session_id FROM screening_responses WHERE id=? AND screening_id=? AND workspace_id=?",
         )
         .get(
           String(req.params.responseId),
@@ -849,6 +961,8 @@ export function registerLiveInterviews(
           answer.liveEvidence?.sessionId ? [answer.liveEvidence.sessionId] : [],
         ),
       );
+      if (response.live_session_id)
+        submittedSessions.add(String(response.live_session_id));
       res.setHeader("Cache-Control", "no-store");
       res.json({
         items: rows
@@ -902,13 +1016,35 @@ export function liveSubmissionEvidence(
     throw new Error("End the live interview before submitting your responses.");
   const answers = store.db
     .prepare(
-      "SELECT question_id,text,created_at FROM screening_live_events WHERE session_id=? AND kind='answer' ORDER BY sequence",
+      "SELECT question_id,text,created_at FROM screening_live_events WHERE session_id=? AND kind IN ('answer','followup-answer') ORDER BY sequence",
     )
     .all(session.id);
+  const followUps = store.db
+    .prepare(
+      "SELECT question_id,text,created_at FROM screening_live_events WHERE session_id=? AND kind='followup-question' ORDER BY sequence",
+    )
+    .all(session.id)
+    .map((question) => {
+      const response = store.db
+        .prepare(
+          "SELECT kind,text,created_at FROM screening_live_events WHERE session_id=? AND question_id=? AND kind IN ('followup-answer','followup-skip') ORDER BY sequence LIMIT 1",
+        )
+        .get(session.id, question.question_id);
+      return {
+        questionId: String(question.question_id),
+        question: String(question.text),
+        answer:
+          response?.kind === "followup-answer" ? String(response.text) : null,
+        skipped: response?.kind === "followup-skip",
+        askedAt: String(question.created_at),
+        answeredAt: response ? String(response.created_at) : null,
+      };
+    });
   return {
     sessionId: session.id,
     consentAt: session.consent_at,
     endedAt: session.ended_at,
+    followUps,
     answers: answers.map((answer) => ({
       questionId: String(answer.question_id),
       text: String(answer.text),

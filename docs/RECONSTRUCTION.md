@@ -188,3 +188,7 @@ The GitHub workflow runs API tests, production build and Chromium tests. A workf
 ## Screening delivery and report collaboration
 
 See [SCREENING_DELIVERY_UPDATE.md](SCREENING_DELIVERY_UPDATE.md) for the current live interview architecture, reviewed screening invitations, reminders, named report access and personal email subscriptions. Earlier gaps described above are historical where superseded by that update. All new background delivery is persistent and rechecks current authorization before dispatch. The default outbox does not send email. LiveKit and Resend credentials were absent during verification, so their real external operations remain unverified.
+
+## Screening recording, adaptive questions and public report results
+
+See [SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md](SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md) for separately consented LiveKit/S3 recording and authenticated range playback, bounded adaptive follow-ups with original-question evidence, and reviewed expiring public report projections. It supersedes earlier gaps for these features while preserving the distinct no-archive questionnaire audio path. Provider execution requires LiveKit, a running interview agent, speech services and private S3 configuration; offline adapter and browser tests do not establish that these external services are operating.

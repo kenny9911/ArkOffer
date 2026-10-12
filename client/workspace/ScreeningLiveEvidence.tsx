@@ -6,11 +6,20 @@ type Session = {
   consentAt: string;
   endedAt: string | null;
   endReason: string | null;
-  recording: false;
+  recording: boolean;
   events: {
     id: string;
     sequence: number;
-    kind: "ready" | "answer" | "agent" | "ended" | "error";
+    kind:
+      | "ready"
+      | "answer"
+      | "agent"
+      | "ended"
+      | "error"
+      | "followup-question"
+      | "followup-answer"
+      | "skip"
+      | "followup-skip";
     text: string;
     createdAt: string;
   }[];
@@ -51,8 +60,10 @@ export default function ScreeningLiveEvidence({ path }: { path: string }) {
         <div>
           <p className="screening-candidate-muted">
             The transcript may contain transcription errors. Final answers above
-            include the candidate’s corrections. Audio and video were not
-            recorded.
+            include the candidate’s corrections.{" "}
+            {sessions && !sessions.some((session) => session.recording)
+              ? "Audio and video were not recorded."
+              : "Consented recordings, when available, appear below."}
           </p>
           {error ? (
             <p role="alert">
@@ -80,13 +91,30 @@ export default function ScreeningLiveEvidence({ path }: { path: string }) {
                 </p>
                 <ol className="screening-live-turns">
                   {session.events
-                    .filter((event) => ["answer", "agent"].includes(event.kind))
+                    .filter((event) =>
+                      [
+                        "answer",
+                        "agent",
+                        "followup-question",
+                        "followup-answer",
+                        "skip",
+                        "followup-skip",
+                      ].includes(event.kind),
+                    )
                     .map((event) => (
                       <li key={event.id}>
                         <strong>
-                          {event.kind === "answer"
+                          {[
+                            "answer",
+                            "followup-answer",
+                            "skip",
+                            "followup-skip",
+                          ].includes(event.kind)
                             ? "Candidate"
                             : "Interviewer"}
+                          {event.kind.startsWith("followup-")
+                            ? " · Follow-up"
+                            : ""}
                         </strong>
                         <time dateTime={event.createdAt}>
                           {new Date(event.createdAt).toLocaleTimeString()}
