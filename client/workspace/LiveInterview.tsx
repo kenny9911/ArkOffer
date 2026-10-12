@@ -19,6 +19,8 @@ type Capability = {
   enabled: boolean;
   available: boolean;
   cameraPolicy: "required" | "optional" | "off";
+  recording?: boolean;
+  recordingRetentionDays?: number;
   reason: string;
   previousSession?: LiveSession | null;
 };
@@ -48,6 +50,7 @@ export default function LiveInterview({
   const [camera, setCamera] = useState(true),
     [consent, setConsent] = useState(false),
     [error, setError] = useState("");
+  const [recordingConsent, setRecordingConsent] = useState(false);
   const [session, setSession] = useState<LiveSession | null>(null),
     [ready, setReady] = useState(false),
     [applied, setApplied] = useState(false);
@@ -210,7 +213,12 @@ export default function LiveInterview({
     setPhase("idle");
   }
   async function join() {
-    if (!consent || phase !== "ready") return;
+    if (
+      !consent ||
+      (capability?.recording && !recordingConsent) ||
+      phase !== "ready"
+    )
+      return;
     const attempt = ++generation.current;
     setError("");
     setPhase("joining");
@@ -222,6 +230,7 @@ export default function LiveInterview({
         requestId: crypto.randomUUID(),
         consent: true,
         cameraEnabled: camera,
+        ...(capability?.recording ? { recordingConsent: true } : {}),
       });
       sessionId.current = data.item.id;
       if (!mounted.current || generation.current !== attempt) {
@@ -314,7 +323,8 @@ export default function LiveInterview({
       const text = session.events
         .filter(
           (event) =>
-            event.kind === "answer" && event.questionId === question.id,
+            ["answer", "followup-answer"].includes(event.kind) &&
+            event.questionId === question.id,
         )
         .map((event) => event.text || "")
         .join("\n");
@@ -448,16 +458,36 @@ export default function LiveInterview({
                 the AI interviewer and have my spoken responses transcribed for
                 the hiring team.
               </label>
+              {capability.recording && (
+                <label className="live-interview-check">
+                  <input
+                    type="checkbox"
+                    checked={recordingConsent}
+                    onChange={(event) =>
+                      setRecordingConsent(event.target.checked)
+                    }
+                  />
+                  I agree to recording of my interview audio
+                  {camera ? " and camera video" : ""} for the hiring team,
+                  retained for up to {capability.recordingRetentionDays || 30}{" "}
+                  days.
+                </label>
+              )}
               <p className="live-interview-note">
-                Video and audio recordings are not stored. A transcript is
-                retained. The interviewer does not assess your appearance or
-                make hiring decisions. Maximum interview time: 30 minutes.
+                {capability.recording
+                  ? "Recording starts when you join and ends when you leave. Your hiring team can privately review or download it before its retention deadline. "
+                  : "Video and audio recordings are not stored. "}
+                A transcript is retained. The interviewer does not assess your
+                appearance or make hiring decisions. Maximum interview time: 30
+                minutes.
               </p>
               <div className="live-interview-actions">
                 <button
                   type="button"
                   className="business-button"
-                  disabled={!consent}
+                  disabled={
+                    !consent || (capability.recording && !recordingConsent)
+                  }
                   onClick={() => void join()}
                 >
                   Start live interview
@@ -537,14 +567,30 @@ export default function LiveInterview({
               >
                 <summary>Interview transcript</summary>
                 {session.events
-                  .filter(
-                    (event) =>
-                      event.kind === "answer" || event.kind === "agent",
+                  .filter((event) =>
+                    [
+                      "answer",
+                      "agent",
+                      "followup-question",
+                      "followup-answer",
+                      "skip",
+                      "followup-skip",
+                    ].includes(event.kind),
                   )
                   .map((event) => (
                     <div key={event.id}>
                       <strong>
-                        {event.kind === "answer" ? "You" : "Interviewer"}
+                        {[
+                          "answer",
+                          "followup-answer",
+                          "skip",
+                          "followup-skip",
+                        ].includes(event.kind)
+                          ? "You"
+                          : "Interviewer"}
+                        {event.kind.startsWith("followup-")
+                          ? " · Follow-up"
+                          : ""}
                       </strong>
                       <p>{event.text}</p>
                     </div>
@@ -560,10 +606,7 @@ export default function LiveInterview({
               <button
                 type="button"
                 className="business-button"
-                disabled={
-                  applied ||
-                  !session?.events.some((event) => event.kind === "answer")
-                }
+                disabled={applied || !session}
                 onClick={useTranscript}
               >
                 {applied

@@ -364,7 +364,7 @@ Answers go only to the explicitly linked requester's private DM. The shared know
 - `POST /api/interviews/:token/responses` accepts optional `liveSessionId` for an ended/failed session of that publication. The server retains original answer transcripts and flags candidate edits.
 - `GET /api/screenings/:id/responses/:responseId/live` requires an active workspace member and returns only sessions attached to that submitted response. Reviewer UI shows original transcripts separately from final candidate answers.
 
-Room sessions require configured LiveKit, an allowed workspace, a registered ArkOffer interview agent and speech/text providers. Tokens cannot record or manage rooms. Expiry, revocation, completion and shutdown trigger room cleanup. Audio/video are streamed, not archived; see `agents/interview` and [delivery setup](../docs/SCREENING_DELIVERY_UPDATE.md).
+Room sessions require configured LiveKit, an allowed workspace, a registered ArkOffer interview agent and speech/text providers. Tokens cannot record or manage rooms. Expiry, revocation, completion and shutdown trigger room cleanup. Audio/video are streamed; optional separately consented recording is described below. See `agents/interview` and [delivery setup](../docs/SCREENING_DELIVERY_UPDATE.md).
 
 ## Screening invitations and reminders
 
@@ -385,4 +385,26 @@ Default reminders are three and one days before the saved 1–30 day deadline. P
 - `GET /api/report-views/:id/subscription/deliveries/:deliveryId` produces a fresh, permission-checked preview of that subscriber's delivery.
 - Public `GET /api/report-subscriptions/unsubscribe/:token` is a confirmation page; `POST` disables that subscription and cancels pending mail.
 
-New-result notifications cover completed current-revision runs and currently matching, unchanged, accessible sources. Upcoming reminders apply to selected matching conversations explicitly scheduled with a timezone-bearing start timestamp within 30 minutes; date-only entries are not guessed. Schedules never initiate AI extraction, skip empty digests and recheck subscription revision, membership, report/source access, email and delivery settings at dispatch. Queues retain stable send identities, do not retry uncertain outcomes and distinguish local outbox, provider acceptance and failures. Sharing/subscription APIs do not enable public report links or emailed CSV attachments.
+New-result notifications cover completed current-revision runs and currently matching, unchanged, accessible sources. Upcoming reminders apply to selected matching conversations explicitly scheduled with a timezone-bearing start timestamp within 30 minutes; date-only entries are not guessed. Schedules never initiate AI extraction, skip empty digests and recheck subscription revision, membership, report/source access, email and delivery settings at dispatch. Queues retain stable send identities, do not retry uncertain outcomes and distinguish local outbox, provider acceptance and failures. Public report publication uses separate reviewed APIs below. Subscription email CSV attachments remain unsupported.
+
+## Interview recording and adaptive evidence
+
+- Screening setup adds `recordingEnabled` (default false) and `recordingRetentionDays` (1–90, default 30). Recording requires live mode and ready workspace-scoped LiveKit/S3 configuration before publication or outreach.
+- `GET /api/screening-recordings/status` requires an active workspace session and returns availability plus missing configuration names, never credentials. Public live status returns whether the frozen interview requires recording consent and its retention period.
+- Public `POST /api/interviews/:token/live/sessions` additionally requires `recordingConsent:true` when the published setup enables recording. Egress begins only after this separate consent. Session startup failures end the room and retain an unknown recording outcome for reconciliation rather than issuing another paid start.
+- `GET /api/screenings/:id/responses/:responseId/recordings` requires an active workspace member and returns states, consent/expiry, duration, size and playability only for explicitly submitted live sessions. Object keys/provider URLs are not returned.
+- `GET .../recordings/:recordingId/media` proxies a private MP4 through fresh authorization, supporting a single byte range; `?download=1` requests an attachment. Expired, deleted or unsubmitted recordings are unavailable.
+- Owner/admin `DELETE .../recordings/:recordingId` returns 202, immediately removes playback access and queues durable provider/object deletion. Retention expires access immediately; background deletion retries after outages. Source cascades preserve cleanup tombstones.
+- Signed interview callback kinds additionally include `followup-question`, `followup-answer`, `skip`, `followup-skip`. All reference the frozen original question. Only an explicitly enabled text question permits one follow-up, after its original answer; each initial/follow-up turn resolves at most once. Repeat uses an ordinary `agent` event. Limits: 400 ordered events, 200,000 total transcript characters, 600 characters for a follow-up question.
+- A submitted response preserves its explicit `liveSessionId` even when the candidate typed all final answers. Per-answer evidence retains original and follow-up answers, structured clarification questions/answers/skips, and candidate-edit markers. Identical retries preserve the same session binding; abandoned attempts remain excluded.
+
+## Public report publication
+
+- Author-only `GET /api/report-views/:id/public-links` lists link metadata/status; raw tokens cannot be recovered.
+- Author-only `POST .../public-links/preview` accepts `{runId,title,summary?,columnIds,sourceIds,includeSourceTitles?,allowCsv?,expiresInDays}`. Choose 1–5 columns, 1–20 conversations from a completed current-revision run and 1–30 days. Every selected source requires current owner/administrator authority.
+- Author-only `POST .../public-links` accepts `{previewId,confirmed:true}`. Publication revalidates the preview’s result, source and authority bindings and returns its capability URL once. A consumed preview cannot publish another link.
+- Author-only `DELETE .../public-links/:linkId` permanently revokes access.
+- Anonymous `GET /api/public-reports/:token` returns only reviewed title/summary, selected column labels/types and cell values, optional source titles, and expiry. Anonymous `GET .../:token/export.csv` is available only when explicitly enabled. CSV formula prefixes are escaped.
+- `/reports/shared/:token` renders the anonymous report with loading/unavailable states and optional CSV. API and document responses use no-store/no-referrer/noindex. Only token hashes are stored. Every read/export rechecks expiry, revocation, author membership, report/run bindings and selected-source authority/content; stale or inaccessible publications return a generic 404.
+
+Public projections never include raw transcripts, quotes, private report instructions, annotations, internal source/run IDs, screening recordings or automatically refreshed results. Sharing a completed run is distinct from granting authenticated access to live report evidence.

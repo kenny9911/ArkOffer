@@ -12,6 +12,7 @@ import {
 import type { createAi } from "./ai.js";
 import type { Resource, Store } from "./db.js";
 import { registerReportDrafts } from "./report-drafts.js";
+import { registerReportPublicSharing } from "./report-public-sharing.js";
 import { createMailTransport } from "./mail.js";
 import {
   initializeReportCollaboration,
@@ -176,6 +177,7 @@ export function registerReportViews(
     );
   }
   initializeReportCollaboration(store);
+  registerReportPublicSharing(app, store, { clock });
   registerReportDrafts(app, store, { ai });
   // A process crash may have sent a paid request. Never retry it automatically.
   store.transaction(() => {

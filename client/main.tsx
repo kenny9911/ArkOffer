@@ -8,6 +8,7 @@ import {
   Link,
   useLocation,
   useNavigate,
+  useParams,
 } from "react-router-dom";
 import {
   ArrowRight,
@@ -49,6 +50,11 @@ const WorkspaceAssistant = lazy(() => import("./workspace/WorkspaceAssistant"));
 const Business = lazy(() => import("./workspace/Business"));
 const Shared = lazy(() => import("./workspace/Shared"));
 const ScreeningInterview = lazy(() => import("./workspace/ScreeningInterview"));
+const PublicReport = lazy(() => import("./workspace/PublicReport"));
+function PublicReportRoute() {
+  const { token = "" } = useParams();
+  return <PublicReport token={token} />;
+}
 const ResetPassword = lazy(() => import("./ResetPassword"));
 const AcceptInvite = lazy(() => import("./workspace/AcceptInvite"));
 import "./styles.css";
@@ -393,6 +399,10 @@ function App() {
               element={loading ? <Loading /> : <ResetPassword />}
             />
             <Route path="/shared/:token" element={<Shared />} />
+            <Route
+              path="/reports/shared/:token"
+              element={<PublicReportRoute />}
+            />
             <Route
               path="/invitations/:token"
               element={loading ? <Loading /> : <AcceptInvite />}

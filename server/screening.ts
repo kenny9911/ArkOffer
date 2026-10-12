@@ -81,6 +81,8 @@ type Snapshot = {
     voice: string;
     interviewMode?: "questionnaire" | "live";
     cameraPolicy?: "required" | "optional" | "off";
+    recordingEnabled?: boolean;
+    recordingRetentionDays?: number;
   };
 };
 type Publication = {
@@ -203,10 +205,22 @@ export function registerScreening(
       answers TEXT NOT NULL,
       submitted_at TEXT NOT NULL,
       consent_at TEXT NOT NULL,
-      submission_hash TEXT NOT NULL
+      submission_hash TEXT NOT NULL,
+      live_session_id TEXT
     );
     CREATE INDEX IF NOT EXISTS screening_responses_workspace ON screening_responses(workspace_id, screening_id);
   `);
+
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(screening_responses)")
+      .all()
+      .some((column) => column.name === "live_session_id")
+  ) {
+    store.db.exec(
+      "ALTER TABLE screening_responses ADD COLUMN live_session_id TEXT",
+    );
+  }
 
   function authorize(req: Request, ownerOnly = false) {
     const user = sessionUser(store, req);
@@ -439,6 +453,15 @@ export function registerScreening(
                       .join("\n")
                       .trim(),
                   source: "live-interview-transcription",
+                  ...(live.followUps.some(
+                    (turn) => turn.questionId === question.id,
+                  )
+                    ? {
+                        followUps: live.followUps.filter(
+                          (turn) => turn.questionId === question.id,
+                        ),
+                      }
+                    : {}),
                 },
               }
             : {}),
@@ -466,11 +489,22 @@ export function registerScreening(
       );
       const existing = store.db
         .prepare(
-          "SELECT submission_hash FROM screening_responses WHERE publication_id = ?",
+          "SELECT submission_hash,live_session_id,answers FROM screening_responses WHERE publication_id = ?",
         )
         .get(row.id);
       if (existing) {
-        if (existing.submission_hash !== submissionHash)
+        const priorAnswers = JSON.parse(String(existing.answers)) as Array<{
+          liveEvidence?: { sessionId?: string };
+        }>;
+        const priorLiveSession =
+          existing.live_session_id ??
+          priorAnswers.find((answer) => answer.liveEvidence?.sessionId)
+            ?.liveEvidence?.sessionId ??
+          null;
+        if (
+          existing.submission_hash !== submissionHash ||
+          priorLiveSession !== (input.liveSessionId ?? null)
+        )
           return fail(
             409,
             "This link has already received a response. Ask the hiring team for a new link to submit again.",
@@ -480,8 +514,8 @@ export function registerScreening(
       }
       store.db
         .prepare(
-          `INSERT INTO screening_responses (id, publication_id, screening_id, workspace_id, candidate_name, email, answers, submitted_at, consent_at, submission_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO screening_responses (id, publication_id, screening_id, workspace_id, candidate_name, email, answers, submitted_at, consent_at, submission_hash, live_session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           randomUUID(),
@@ -494,6 +528,7 @@ export function registerScreening(
           submittedAt,
           submittedAt,
           submissionHash,
+          input.liveSessionId ?? null,
         );
       res.status(201).json({ ok: true, alreadySubmitted: false });
     }),
@@ -505,7 +540,7 @@ export function registerScreening(
       const { user, screening } = authorize(req);
       const responses = store.db
         .prepare(
-          `SELECT id, publication_id, candidate_name, email, answers, submitted_at, consent_at
+          `SELECT id, publication_id, candidate_name, email, answers, submitted_at, consent_at, live_session_id
       FROM screening_responses WHERE screening_id = ? AND workspace_id = ? ORDER BY submitted_at DESC`,
         )
         .all(screening.id, user.workspaceId);
@@ -524,6 +559,7 @@ export function registerScreening(
           answers: JSON.parse(row.answers as string),
           submittedAt: row.submitted_at,
           consentAt: row.consent_at,
+          liveSessionId: row.live_session_id,
         })),
         publications: links.map((row) => ({
           id: row.id,

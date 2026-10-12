@@ -36,6 +36,11 @@ import {
   registerLiveInterviews,
 } from "./live-interviews.js";
 import { registerReportSubscriptionUnsubscribe } from "./report-collaboration.js";
+import { registerPublicReportReads } from "./report-public-sharing.js";
+import {
+  registerScreeningRecordings,
+  screeningRecordingStatus,
+} from "./screening-recordings.js";
 import { registerAccount, type AccountOptions } from "./account.js";
 import { registerProviders } from "./providers.js";
 import { createBilling } from "./billing.js";
@@ -423,9 +428,13 @@ export function createApp(options: AppOptions = {}) {
     .filter(Boolean);
   app.disable("x-powered-by");
   if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "same-origin");
+    if (req.path.startsWith("/reports/shared/")) {
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+    }
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -507,15 +516,35 @@ export function createApp(options: AppOptions = {}) {
         409,
         "Live interviewing is not configured for this workspace. Complete its server setup before publishing or sending invitations.",
       );
+    const recording = (snapshot as { setup?: { recordingEnabled?: boolean } })
+      ?.setup?.recordingEnabled;
+    if (
+      recording &&
+      (mode !== "live" || !screeningRecordingStatus(workspaceId).available)
+    )
+      throw new ScreeningError(
+        409,
+        "Recording requires a live interview and configured private recording storage before publishing or sending invitations.",
+      );
   };
   registerScreening(app, store, {
     validateSnapshot: validateScreeningDelivery,
   });
-  app.locals.liveInterviews = registerLiveInterviews(app, store);
+  let recordings: ReturnType<typeof registerScreeningRecordings>;
+  app.locals.liveInterviews = registerLiveInterviews(app, store, {
+    recording: {
+      status: (workspaceId) => screeningRecordingStatus(workspaceId),
+      startSession: (id, consent) => recordings.startSession(id, consent),
+      stopSession: (id) => recordings.stopSession(id),
+    },
+  });
+  recordings = registerScreeningRecordings(app, store);
+  app.locals.screeningRecordings = recordings;
   app.locals.screeningOutreach = registerScreeningOutreach(app, store, {
     validateSnapshot: validateScreeningDelivery,
   });
   registerReportSubscriptionUnsubscribe(app, store);
+  registerPublicReportReads(app, store);
   registerVoiceScreening(app, store, {
     generateClarification: async ({
       workspaceId,

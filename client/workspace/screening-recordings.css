@@ -1,0 +1,55 @@
+.screening-recordings {
+  margin-top: 16px;
+  border-top: 1px solid #e6e6e6;
+  padding-top: 16px;
+}
+.screening-recordings article {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+}
+.screening-recordings article header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.screening-recordings article header span {
+  text-transform: capitalize;
+  color: #666;
+}
+.screening-recordings video {
+  display: block;
+  width: 100%;
+  max-height: 430px;
+  background: #151515;
+  margin: 14px 0;
+  border-radius: 6px;
+}
+.screening-recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.screening-recording-confirm {
+  padding: 12px;
+  background: #fff6ee;
+  border: 1px solid #edccb0;
+  border-radius: 6px;
+  margin-top: 12px;
+}
+.screening-recording-confirm button + button {
+  margin-left: 8px;
+}
+@media (max-width: 600px) {
+  .screening-recordings article {
+    padding: 12px;
+  }
+  .screening-recordings article header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

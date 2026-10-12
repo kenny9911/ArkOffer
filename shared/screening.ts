@@ -32,6 +32,8 @@ export function newScreeningConfig(): ScreeningConfig {
       voice: "",
       interviewMode: "questionnaire",
       cameraPolicy: "optional",
+      recordingEnabled: false,
+      recordingRetentionDays: 30,
     },
     context: { role: "", company: "" },
     outreach: { deadlineDays: 7 },

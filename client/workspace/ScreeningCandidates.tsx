@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, RefreshCw, Search, X } from "lucide-react";
 import ScreeningLiveEvidence from "./ScreeningLiveEvidence";
+import ScreeningRecordings from "./ScreeningRecordings";
 import "./screening-candidates.css";
 
 type Status = "unreviewed" | "reviewed" | "progressed" | "rejected";
@@ -30,6 +31,7 @@ type Answer = {
   };
 };
 type Candidate = {
+  liveSessionId?: string | null;
   id: string;
   candidateName: string;
   email: string;
@@ -487,10 +489,16 @@ function ReviewPanel({
           )}
         </article>
       ))}
-      {candidate.answers.some((answer) => answer.liveEvidence) && (
-        <ScreeningLiveEvidence
-          path={`${path}/responses/${encodeURIComponent(candidate.id)}/live`}
-        />
+      {(candidate.liveSessionId ||
+        candidate.answers.some((answer) => answer.liveEvidence)) && (
+        <>
+          <ScreeningLiveEvidence
+            path={`${path}/responses/${encodeURIComponent(candidate.id)}/live`}
+          />
+          <ScreeningRecordings
+            path={`${path}/responses/${encodeURIComponent(candidate.id)}/recordings`}
+          />
+        </>
       )}
       <p className="screening-candidate-muted">
         Candidate consented on {new Date(candidate.consentAt).toLocaleString()}.

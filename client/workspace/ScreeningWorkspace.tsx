@@ -145,6 +145,11 @@ export default function ScreeningWorkspace({
     recording: boolean;
   } | null>(null);
   const [liveError, setLiveError] = useState("");
+  const [recordingStatus, setRecordingStatus] = useState<{
+    available: boolean;
+    missing: string[];
+  } | null>(null);
+  const [recordingError, setRecordingError] = useState("");
   useEffect(() => {
     const abort = new AbortController();
     api<{ available: boolean; missing: string[]; recording: boolean }>(
@@ -156,6 +161,16 @@ export default function ScreeningWorkspace({
       })
       .catch((cause) => {
         if (!abort.signal.aborted) setLiveError(cause.message);
+      });
+    api<{ available: boolean; missing: string[] }>(
+      "screening-recordings/status",
+      { signal: abort.signal },
+    )
+      .then((status) => {
+        if (!abort.signal.aborted) setRecordingStatus(status);
+      })
+      .catch((cause) => {
+        if (!abort.signal.aborted) setRecordingError(cause.message);
       });
     return () => abort.abort();
   }, []);
@@ -443,7 +458,9 @@ export default function ScreeningWorkspace({
                     busy ||
                     questions.length === 0 ||
                     (editor.screeningConfig.setup.interviewMode === "live" &&
-                      !liveStatus?.available)
+                      !liveStatus?.available) ||
+                    (editor.screeningConfig.setup.recordingEnabled &&
+                      !recordingStatus?.available)
                   }
                   onClick={() => setPublishing(true)}
                 >
@@ -638,6 +655,9 @@ export default function ScreeningWorkspace({
                                 ...editor.screeningConfig.setup,
                                 interviewMode: event.target
                                   .value as ScreeningConfig["setup"]["interviewMode"],
+                                recordingEnabled:
+                                  event.target.value === "live" &&
+                                  editor.screeningConfig.setup.recordingEnabled,
                               },
                             })
                           }
@@ -674,13 +694,72 @@ export default function ScreeningWorkspace({
                           </Field>
                           <p className="screen-hint" role="status">
                             {liveStatus?.available
-                              ? "Candidates join a private live room, speak with the interviewer, and review their transcript before submitting. Video is live only; it is not recorded."
+                              ? "Candidates join a private live room, speak with the interviewer, and review their transcript before submitting. Eligible questions can include one adaptive follow-up."
                               : liveError
                                 ? `Live interview setup could not be checked: ${liveError}`
                                 : liveStatus
                                   ? `Live interviewing needs server setup: ${liveStatus.missing.join(", ")}. You can save this draft; publishing is available after setup.`
                                   : "Checking live interview setup…"}
                           </p>
+                          <label className="check-row">
+                            <input
+                              type="checkbox"
+                              checked={
+                                editor.screeningConfig.setup.recordingEnabled
+                              }
+                              onChange={(event) =>
+                                config({
+                                  setup: {
+                                    ...editor.screeningConfig.setup,
+                                    recordingEnabled: event.target.checked,
+                                  },
+                                })
+                              }
+                            />
+                            Record interview video and audio
+                          </label>
+                          <p className="screen-hint">
+                            Candidates must consent before recording starts.
+                            Recordings are private to your hiring workspace;
+                            camera-off interviews capture audio only.
+                          </p>
+                          {editor.screeningConfig.setup.recordingEnabled && (
+                            <>
+                              <Field
+                                label="Recording retention (days)"
+                                hint="Recordings expire after 1–90 days and are then deleted from storage."
+                              >
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={90}
+                                  value={
+                                    editor.screeningConfig.setup
+                                      .recordingRetentionDays
+                                  }
+                                  onChange={(event) =>
+                                    config({
+                                      setup: {
+                                        ...editor.screeningConfig.setup,
+                                        recordingRetentionDays: Number(
+                                          event.target.value,
+                                        ),
+                                      },
+                                    })
+                                  }
+                                />
+                              </Field>
+                              <p className="screen-hint" role="status">
+                                {recordingStatus?.available
+                                  ? "Private recording storage is configured."
+                                  : recordingError
+                                    ? `Recording setup could not be checked: ${recordingError}`
+                                    : recordingStatus
+                                      ? `Recording needs server setup: ${recordingStatus.missing.join(", ")}. You can save this draft before setup is complete.`
+                                      : "Checking recording setup…"}
+                              </p>
+                            </>
+                          )}
                         </>
                       )}
                     </div>

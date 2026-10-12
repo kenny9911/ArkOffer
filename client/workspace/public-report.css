@@ -1,0 +1,148 @@
+.public-report-page {
+  min-height: 100vh;
+  padding: 32px clamp(20px, 6vw, 90px);
+  background: #fafafa;
+  color: #303334;
+  font:
+    14px/1.6 Inter,
+    Arial,
+    sans-serif;
+}
+.public-report-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 42px;
+}
+.public-report-brand strong {
+  font-size: 21px;
+  letter-spacing: -0.5px;
+}
+.public-report-brand span {
+  border-left: 1px solid #ddd;
+  padding-left: 12px;
+  margin-left: 8px;
+  color: #777;
+}
+.public-report-document {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: clamp(22px, 4vw, 48px);
+  background: white;
+  border: 1px solid #e6e6e6;
+  border-radius: 12px;
+}
+.public-report-title > span {
+  color: #6b6d70;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.public-report-title h1 {
+  color: #303334;
+  font-size: clamp(24px, 3vw, 36px);
+  margin: 10px 0 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.public-report-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.public-report-meta {
+  font-size: 12px;
+  color: #73767a;
+}
+.public-report-table-wrap {
+  margin-top: 28px;
+  overflow-x: auto;
+  border: 1px solid #e7e7e7;
+  border-radius: 8px;
+}
+.public-report-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+  text-align: left;
+}
+.public-report-table-wrap caption {
+  text-align: left;
+  padding: 12px 16px;
+  color: #757575;
+  font-size: 12px;
+  border-bottom: 1px solid #e7e7e7;
+}
+.public-report-table-wrap th,
+.public-report-table-wrap td {
+  padding: 14px 16px;
+  vertical-align: top;
+  border-bottom: 1px solid #eee;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 130px;
+  max-width: 400px;
+}
+.public-report-table-wrap thead th {
+  background: #f8f8f8;
+  font-size: 12px;
+  font-weight: 600;
+}
+.public-report-table-wrap tbody th {
+  font-weight: 500;
+}
+.public-report-table-wrap tr:last-child td,
+.public-report-table-wrap tr:last-child th {
+  border-bottom: 0;
+}
+.public-report-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #72767b;
+  margin: 18px 0;
+}
+.public-report-download {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  text-decoration: none;
+  color: #37393d;
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  padding: 9px 14px;
+}
+.public-report-footer {
+  text-align: center;
+  font-size: 12px;
+  color: #777;
+  margin: 30px 0;
+}
+.public-report-empty {
+  max-width: 550px;
+  margin: 70px auto;
+}
+.public-report-empty h1 {
+  font-size: 28px;
+}
+.public-report-empty button {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px 14px;
+  background: #fff;
+  cursor: pointer;
+}
+.public-report-page :focus-visible {
+  outline: 3px solid #5c6eff;
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .public-report-page {
+    padding: 20px 14px;
+  }
+  .public-report-brand {
+    margin-bottom: 24px;
+  }
+  .public-report-document {
+    padding: 22px 16px;
+  }
+}

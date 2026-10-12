@@ -36,6 +36,8 @@ export const screeningConfigSchema = z
         cameraPolicy: z
           .enum(["optional", "required", "off"])
           .default("optional"),
+        recordingEnabled: z.boolean().default(false),
+        recordingRetentionDays: z.number().int().min(1).max(90).default(30),
       })
       .strict(),
     context: z
