@@ -328,3 +328,110 @@ test("unsaved candidate notes cannot be discarded by link navigation and conflic
   await candidates.getByRole("tab", { name: /^Candidate links/ }).click();
   await expect(candidates).toContainText("Each link accepts one response");
 });
+
+test("live review distinguishes original speech from corrected answers and retries transcript loading", async ({
+  page,
+  baseURL,
+}) => {
+  const { screen, candidates, responseId } = await fixture(page, baseURL);
+  const now = new Date().toISOString();
+  const sessionId = crypto.randomUUID();
+  await page.route(
+    `**/api/screenings/${screen.id}/responses`,
+    async (route) => {
+      const response = await route.fetch();
+      const data = await response.json();
+      const candidate = data.items.find(
+        (item: { id: string }) => item.id === responseId,
+      );
+      candidate.answers[0].liveEvidence = {
+        sessionId,
+        consentAt: now,
+        endedAt: now,
+        originalTranscript: "I built a scheduling AP eye.",
+        candidateEdited: true,
+      };
+      await route.fulfill({ response, json: data });
+    },
+  );
+  let attempts = 0;
+  await page.route(
+    `**/api/screenings/${screen.id}/responses/${responseId}/live`,
+    async (route) => {
+      attempts++;
+      if (attempts === 1) {
+        await route.fulfill({
+          status: 503,
+          json: { error: "Transcript temporarily unavailable." },
+        });
+        return;
+      }
+      await route.fulfill({
+        json: {
+          items: [
+            {
+              id: sessionId,
+              state: "ended",
+              consentAt: now,
+              endedAt: now,
+              endReason: "candidate-ended",
+              recording: false,
+              events: [
+                {
+                  id: crypto.randomUUID(),
+                  sequence: 1,
+                  kind: "agent",
+                  text: "Describe an API you built.",
+                  createdAt: now,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  sequence: 2,
+                  kind: "answer",
+                  text: "I built a scheduling AP eye.",
+                  createdAt: now,
+                },
+              ],
+            },
+          ],
+        },
+      });
+    },
+  );
+  await page.reload();
+  await candidates
+    .getByRole("button", { name: "Alex Example", exact: true })
+    .click();
+  const review = candidates.getByRole("complementary", {
+    name: "Review Alex Example",
+  });
+  await expect(review).toContainText("TypeScript scheduling API");
+  await review
+    .getByText("Live interview transcript · candidate corrected", {
+      exact: true,
+    })
+    .click();
+  await expect(
+    review.getByText("I built a scheduling AP eye.", { exact: true }),
+  ).toBeVisible();
+  expect(attempts).toBe(0);
+  const evidence = review.getByRole("region", {
+    name: "Live interview evidence",
+  });
+  await evidence
+    .getByRole("button", { name: "View full interview transcript" })
+    .click();
+  await expect(evidence.getByRole("alert")).toContainText(
+    "temporarily unavailable",
+  );
+  await evidence.getByRole("button", { name: "Retry transcript" }).click();
+  await expect(evidence.getByRole("listitem")).toHaveCount(2);
+  await expect(evidence).toContainText("Audio and video were not recorded");
+  await expect(
+    evidence.getByText("I built a scheduling AP eye.", { exact: true }),
+  ).toBeVisible();
+  await evidence
+    .getByRole("button", { name: "Hide full interview transcript" })
+    .click();
+  await expect(evidence.getByRole("list")).not.toBeVisible();
+});

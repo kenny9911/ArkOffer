@@ -1138,3 +1138,51 @@
 .report-line-chart > p {
   font-size: 11px;
 }
+
+/* Keep long sharing and subscription controls inside the desktop inspector.
+   The canvas and navigation must stay in place when a control receives focus. */
+@media (min-width: 851px) {
+  .reports-builder {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .reports-builder > .reports-topbar,
+  .reports-builder > .ai-report-error-box,
+  .reports-builder > .ai-report-message {
+    flex-shrink: 0;
+  }
+  .reports-builder .report-builder-layout {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .reports-builder .report-canvas {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .reports-builder .report-toolbar {
+    position: sticky;
+    top: 0;
+    background: #fff;
+    z-index: 2;
+  }
+  .reports-builder .report-inspector {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .reports-builder .report-inspector > [role="tablist"] {
+    flex-shrink: 0;
+  }
+  .reports-builder .report-inspector-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+}

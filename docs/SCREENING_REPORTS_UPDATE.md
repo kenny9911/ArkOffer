@@ -1,5 +1,7 @@
 # Screening and Reports workspace update — 13 October 2026
 
+**Follow-up:** [Screening delivery and report collaboration](SCREENING_DELIVERY_UPDATE.md) implements optional live interviews, invitations/reminders and named report sharing/subscriptions. The gaps in this earlier inspection record describe the state before that delivery.
+
 This update replaces ArkOffer’s modal screening workflow and stacked report/dashboard page with routed workspaces informed by a fresh Metaview inspection. It implements working local controls and persistent APIs, but **does not establish complete Metaview parity**. The remaining gaps are listed below and in [PARITY.md](PARITY.md).
 
 ## What the source evidence establishes

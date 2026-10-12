@@ -1,0 +1,43 @@
+# Screening delivery and report collaboration — 13 October 2026
+
+This continues the [Screening and Reports reconstruction](SCREENING_REPORTS_UPDATE.md), using its signed-in observations and static REA evidence. It adds independent full-stack implementations of selected missing workflows. It does **not** establish complete Metaview parity or live provider operation.
+
+## Screening invitations and reminders
+
+The saved screening's Outreach tab includes candidate-library selection and manually entered recipients, editable subject/body, supported personalization variables and reminder timing. A reviewer first prepares an immutable preview and then explicitly confirms the batch. Any changed screening revision, selected candidate, sender configuration or stale preview requires another review. Owners manage delivery; workspace members can inspect its status.
+
+Each recipient receives a separate immutable publication, with the saved 1–30 day deadline. Raw candidate and unsubscribe capability tokens are derived only when needed and never stored in the database. The default reminder schedule is three and one days before the deadline; up to five reminder days can be selected. Links, submitted responses, opt-outs and delivery history persist across restart.
+
+A background worker stops pending messages after completion, revocation, expiration, cancellation, workspace opt-out, candidate removal or loss of the initiating owner's access. Missed reminder windows older than six hours and messages less than 24 hours after another delivery are skipped. Unknown provider outcomes are retained for human investigation without automatic resend. Cancellation cannot recall an email already accepted by a provider.
+
+`MAIL_MODE=outbox` stores a local preview and never sends email. Live operation requires `MAIL_MODE=resend`, `RESEND_API_KEY`, a verified sender (`MAIL_FROM`, with `ROBOAPPLY_EMAIL_FROM` as an existing-configuration fallback), HTTPS `PUBLIC_APP_URL` (or `APP_URL`), explicit `MAIL_WORKSPACE_IDS`, and a stable random `SCREENING_OUTREACH_SECRET` of at least 32 characters. In outbox mode only, a key is created with mode 0600 inside ignored `DATA_DIR`. Preserve this key; changing it prevents reconstruction of existing invitation URLs. Credentials and runtime keys are not committed.
+
+## Live interviews
+
+Setup now selects a questionnaire or a LiveKit interview, with camera required, optional or off. Publication and invitation preparation reject an unavailable live configuration. Candidate device preview precedes an explicit consent/join action. The room token is restricted to that session and permitted microphone/camera tracks. Device access ends on leave, failure and unmount. A session lasts at most 30 minutes, with three attempts per candidate publication, 100 starts per workspace/day and five concurrent sessions per workspace. The server closes expired, revoked and completed rooms; a durable cleanup queue survives source deletion and interrupted provider cleanup. Shutdown attempts bounded cleanup and leaves unconfirmed work for restart.
+
+`agents/interview/agent.py` is an actual separately running LiveKit Agents service. It asks the frozen published questions one at a time, captures speech-to-text answers and uses the configured text gateway/model for brief neutral acknowledgments. A candidate can ask to repeat a question. Questions, answer identities and their order remain controlled by the program. This is a published-question interview, not a claim of Metaview's adaptive interview logic, translation, scoring or private prompts. Camera media is streamed to the room; the agent subscribes only to audio and does not analyze appearance. No audio/video archive or synchronized recording is created.
+
+The agent sends authenticated, ordered and replay-checked transcript events back to ArkOffer. It cannot provide hiring scores through this callback. The candidate ends the session, reviews/corrects answers and explicitly submits. Stored evidence distinguishes the original transcript from corrected answers. Hiring-team reviewers can open the full submitted session transcript, with consent/end times. Abandoned sessions are not silently attached to another submitted answer set.
+
+The API uses the existing `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `INTERVIEW_ENGINE_AGENT_NAME`, `LIVEKIT_AGENT_CALLBACK_SECRET` and text provider/model settings. `LLM_INTERVIEW_MODEL` overrides `LLM_MODEL` only when explicitly set. The text gateway is not silently replaced. `LIVEKIT_WORKSPACE_IDS` can specify allowed workspaces; when absent it falls back to the existing text-AI workspace allowlist. The agent requires an exact reachable `INTERVIEW_AGENT_CALLBACK_URL`, or derives it from `PUBLIC_APP_URL`/`APP_URL`/a single `APP_ORIGIN`. Browser Origin allowlists may contain several origins and are not themselves a public URL.
+
+LiveKit Cloud can supply speech inference; a self-hosted LiveKit setup requires a configured speech provider. `INTERVIEW_VOICE_PROVIDER=openai` uses the separate `OPENAI_API_KEY` and optional speech model/base settings. Speech inference may incur provider usage independently of the text gateway. See [agent setup](../agents/interview/README.md) for installation, pinned dependencies and tests.
+
+## Report sharing and email updates
+
+Authors can share a report with active named workspace members as viewers or editors. The report directory has a Shared with me view. Editors may update the definition, presentation and annotations or explicitly start extraction. Authors retain grant-management and deletion rights. Favorites are personal.
+
+A report grant does **not** grant access to a private conversation. Read, evidence, aggregate and CSV paths recheck the current report grant, active membership, source permissions and source content. Historical runs retain their original definition; changing a filter does not rewrite their results. Queued delivery additionally requires the current definition revision and current filters. Missing access or changed content is withheld. Definition proposals remain private to their initiating user; sharing a report does not expose those drafts.
+
+Each user can subscribe only their own current email address. Live delivery requires a verified account email. Controls select completed-result updates, reminders for selected upcoming conversations, immediate/weekly/monthly result frequency and explicit UTC schedule. Upcoming reminders require a timezone-bearing start timestamp within 30 minutes; date-only records are not guessed. They are independent of the digest cadence. Weekly day and monthly day (1–31, clamped to month-end) choices persist.
+
+Subscriptions never start paid AI extraction. They notify about completed current-definition runs with currently accessible, unchanged sources and skip empty digests. Delivery state persists across restart, uses stable identities and rechecks grants, account email and configuration before dispatch. Subscription changes, removed access and opt-out cancel pending work. Public unsubscribe is a confirmation GET followed by POST, so merely opening an email link does not unsubscribe. Delivery previews are recomputed under current permissions.
+
+This implementation sends notification text and a report link. Source-style CSV attachments, workspace/public report links, arbitrary recipient lists, multiple independent charts, calendar axes, advanced meeting metrics and scheduled extraction remain gaps.
+
+## Verification and remaining operational blockers
+
+Verification uses synthetic accounts, temporary databases, mocked LiveKit/Resend adapters, fake browser devices and the local mail outbox. It covers both successful workflows and authorization, revocation, stale data, replay, restart, cancellation, scheduling and failed delivery boundaries. The Python runner is tested against the pinned SDK without sending media or candidate records to a provider. The combined run passed **356 Node backend tests**, **77 Chromium browser tests** and **five Python agent tests**, plus a successful production build and repository formatting. Additional focused browser checks cover final presentation changes. GitHub checks on the delivered revision are recorded in its PR.
+
+The existing local environment has empty LiveKit and Resend credentials. It was not modified. A real two-way interview with the deployed agent and real email delivery remain unverified until those services are configured. Green tests demonstrate the implemented contracts; they do not demonstrate 100% Metaview parity. Remaining broader gaps stay visible in [PARITY.md](PARITY.md).

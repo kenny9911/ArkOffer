@@ -11,3 +11,6 @@ playwright-report/
 .rea/
 captures/
 .DS_Store
+__pycache__/
+*.pyc
+.venv/

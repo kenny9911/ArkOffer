@@ -2,11 +2,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { hashToken, sessionUser } from "./auth.js";
-import type { Store } from "./db.js";
+import type { Store, Resource } from "./db.js";
+import { liveSubmissionEvidence } from "./live-interviews.js";
 import { screeningMessage } from "../shared/screening.js";
 import { screeningConfigSchema } from "../shared/screening-schema.js";
 
-const WEEK = 7 * 24 * 60 * 60 * 1000;
 const questionSchema = z
   .object({
     prompt: z.string().trim().min(1).max(2000),
@@ -43,6 +43,7 @@ const submissionSchema = z
     consent: z.literal(true, {
       error: "Acknowledge sharing your responses with the hiring team.",
     }),
+    liveSessionId: z.uuid().optional(),
     voiceEvidence: z
       .array(
         z
@@ -78,6 +79,8 @@ type Snapshot = {
     completionMessage: string;
     language: string;
     voice: string;
+    interviewMode?: "questionnaire" | "live";
+    cameraPolicy?: "required" | "optional" | "off";
   };
 };
 type Publication = {
@@ -90,7 +93,7 @@ type Publication = {
   created_at: string;
   revoked_at: string | null;
 };
-class ScreeningError extends Error {
+export class ScreeningError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -119,8 +122,65 @@ const route =
     }
   };
 
+export function buildScreeningSnapshot(
+  screening: Resource,
+  workspaceName: string,
+) {
+  const config =
+    screening.screeningConfig === undefined
+      ? undefined
+      : screeningConfigSchema.parse(screening.screeningConfig);
+  const questions = questionsSchema
+    .parse(screening.questions)
+    .map((question) => ({
+      ...question,
+      options: question.type === "multiple-choice" ? question.options : [],
+      id: randomUUID(),
+    }));
+  const snapshot: Snapshot = {
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .parse(screening.title || screening.name),
+    description: z
+      .string()
+      .max(5000)
+      .parse(screening.description || ""),
+    workspaceName: workspaceName,
+    questions,
+    ...(config
+      ? {
+          setup: {
+            ...config.setup,
+            welcomeMessage: screeningMessage(
+              config.setup.welcomeMessage,
+              String(screening.title || screening.name),
+              workspaceName,
+            ),
+            completionMessage: screeningMessage(
+              config.setup.completionMessage,
+              String(screening.title || screening.name),
+              workspaceName,
+            ),
+          },
+        }
+      : {}),
+  };
+  if (Buffer.byteLength(JSON.stringify(snapshot)) > 150_000)
+    return fail(413, "The questionnaire is too large to publish.");
+  return { snapshot, deadlineDays: config?.outreach.deadlineDays ?? 7 };
+}
+
 /** Register after the application's JSON/Origin middleware, before its session-only API middleware. */
-export function registerScreening(app: Express, store: Store) {
+export function registerScreening(
+  app: Express,
+  store: Store,
+  options: {
+    validateSnapshot?: (snapshot: Snapshot, workspaceId: string) => void;
+  } = {},
+) {
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS screening_publications (
       id TEXT PRIMARY KEY,
@@ -185,50 +245,11 @@ export function registerScreening(app: Express, store: Store) {
     "/api/screenings/:id/publish",
     route((req, res) => {
       const { user, screening } = authorize(req, true);
-      const config =
-        screening.screeningConfig === undefined
-          ? undefined
-          : screeningConfigSchema.parse(screening.screeningConfig);
-      const questions = questionsSchema
-        .parse(screening.questions)
-        .map((question) => ({
-          ...question,
-          options: question.type === "multiple-choice" ? question.options : [],
-          id: randomUUID(),
-        }));
-      const snapshot: Snapshot = {
-        title: z
-          .string()
-          .trim()
-          .min(1)
-          .max(300)
-          .parse(screening.title || screening.name),
-        description: z
-          .string()
-          .max(5000)
-          .parse(screening.description || ""),
-        workspaceName: user.workspaceName,
-        questions,
-        ...(config
-          ? {
-              setup: {
-                ...config.setup,
-                welcomeMessage: screeningMessage(
-                  config.setup.welcomeMessage,
-                  String(screening.title || screening.name),
-                  user.workspaceName,
-                ),
-                completionMessage: screeningMessage(
-                  config.setup.completionMessage,
-                  String(screening.title || screening.name),
-                  user.workspaceName,
-                ),
-              },
-            }
-          : {}),
-      };
-      if (Buffer.byteLength(JSON.stringify(snapshot)) > 150_000)
-        return fail(413, "The questionnaire is too large to publish.");
+      const { snapshot, deadlineDays } = buildScreeningSnapshot(
+        screening,
+        user.workspaceName,
+      );
+      options.validateSnapshot?.(snapshot, user.workspaceId);
       const active = store.db
         .prepare(
           "SELECT COUNT(*) AS count FROM screening_publications WHERE screening_id = ? AND workspace_id = ? AND expires_at > ? AND revoked_at IS NULL",
@@ -242,9 +263,7 @@ export function registerScreening(app: Express, store: Store) {
       const token = randomBytes(32).toString("hex");
       const id = randomUUID(),
         createdAt = new Date().toISOString(),
-        expiresAt =
-          Date.now() +
-          (config ? config.outreach.deadlineDays * 86400000 : WEEK);
+        expiresAt = Date.now() + deadlineDays * 86400000;
       store.db
         .prepare(
           "INSERT INTO screening_publications (id, screening_id, workspace_id, token_hash, snapshot, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -274,6 +293,18 @@ export function registerScreening(app: Express, store: Store) {
     "/api/interviews/:token",
     route((req, res) => {
       const row = publication(req);
+      if (
+        store.db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='screening_invitations'",
+          )
+          .get()
+      )
+        store.db
+          .prepare(
+            "UPDATE screening_invitations SET opened_at=COALESCE(opened_at,?) WHERE publication_id=?",
+          )
+          .run(Date.now(), row.id);
       const submitted = !!store.db
         .prepare("SELECT id FROM screening_responses WHERE publication_id = ?")
         .get(row.id);
@@ -340,6 +371,24 @@ export function registerScreening(app: Express, store: Store) {
           .get()
       )
         return fail(400, "Voice evidence is unavailable.");
+      let live: ReturnType<typeof liveSubmissionEvidence> | undefined;
+      if (input.liveSessionId) {
+        try {
+          live = liveSubmissionEvidence(
+            store,
+            row.id,
+            row.workspace_id,
+            input.liveSessionId,
+          );
+        } catch (error) {
+          return fail(
+            400,
+            error instanceof Error
+              ? error.message
+              : "Invalid live interview evidence.",
+          );
+        }
+      }
       const answers = snapshot.questions.map((question) => {
         const value = byId.get(question.id) || "";
         if (question.required && !value)
@@ -371,6 +420,28 @@ export function registerScreening(app: Express, store: Store) {
           prompt: question.prompt,
           type: question.type,
           value,
+          ...(live &&
+          live.answers.some((answer) => answer.questionId === question.id)
+            ? {
+                liveEvidence: {
+                  sessionId: live.sessionId,
+                  consentAt: live.consentAt,
+                  endedAt: live.endedAt,
+                  originalTranscript: live.answers
+                    .filter((answer) => answer.questionId === question.id)
+                    .map((answer) => answer.text)
+                    .join("\n"),
+                  candidateEdited:
+                    value !==
+                    live.answers
+                      .filter((answer) => answer.questionId === question.id)
+                      .map((answer) => answer.text)
+                      .join("\n")
+                      .trim(),
+                  source: "live-interview-transcription",
+                },
+              }
+            : {}),
           ...(turn
             ? {
                 voiceEvidence: {

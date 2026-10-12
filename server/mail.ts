@@ -33,9 +33,12 @@ export function mailConfig(): MailConfig {
   return {
     mode: process.env.MAIL_MODE === "resend" ? "resend" : "outbox",
     apiKey: process.env.RESEND_API_KEY || "",
-    from: process.env.MAIL_FROM || "",
+    from: process.env.MAIL_FROM || process.env.ROBOAPPLY_EMAIL_FROM || "",
     replyTo: process.env.MAIL_REPLY_TO || "",
-    publicUrl: process.env.PUBLIC_APP_URL || "http://localhost:5174",
+    publicUrl:
+      process.env.PUBLIC_APP_URL ||
+      process.env.APP_URL ||
+      "http://localhost:5174",
     workspaceIds: (process.env.MAIL_WORKSPACE_IDS || "")
       .split(",")
       .map((id) => id.trim())

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, RefreshCw, Search, X } from "lucide-react";
+import ScreeningLiveEvidence from "./ScreeningLiveEvidence";
 import "./screening-candidates.css";
 
 type Status = "unreviewed" | "reviewed" | "progressed" | "rejected";
@@ -17,6 +18,13 @@ type Answer = {
   value: string;
   voiceEvidence?: {
     durationMs: number;
+    originalTranscript: string;
+    candidateEdited: boolean;
+  };
+  liveEvidence?: {
+    sessionId: string;
+    consentAt: string;
+    endedAt: string;
     originalTranscript: string;
     candidateEdited: boolean;
   };
@@ -463,8 +471,27 @@ function ReviewPanel({
               <p>{answer.voiceEvidence.originalTranscript}</p>
             </details>
           )}
+          {answer.liveEvidence && (
+            <details>
+              <summary>
+                Live interview transcript
+                {answer.liveEvidence.candidateEdited
+                  ? " · candidate corrected"
+                  : " · unchanged"}
+              </summary>
+              <p>
+                {answer.liveEvidence.originalTranscript ||
+                  "No transcript captured for this question."}
+              </p>
+            </details>
+          )}
         </article>
       ))}
+      {candidate.answers.some((answer) => answer.liveEvidence) && (
+        <ScreeningLiveEvidence
+          path={`${path}/responses/${encodeURIComponent(candidate.id)}/live`}
+        />
+      )}
       <p className="screening-candidate-muted">
         Candidate consented on {new Date(candidate.consentAt).toLocaleString()}.
       </p>

@@ -213,6 +213,22 @@
 .screening-candidate-confirm button + button {
   margin-left: 8px;
 }
+.screening-live-evidence {
+  padding: 16px 0;
+  border-bottom: 1px solid #e7e7e5;
+}
+.screening-live-turns {
+  padding-left: 20px;
+  font-size: 13px;
+}
+.screening-live-turns li {
+  margin: 14px 0;
+}
+.screening-live-turns time {
+  display: block;
+  color: #73796f;
+  font-size: 11px;
+}
 @media (max-width: 1000px) {
   .screening-candidate-content.with-review {
     grid-template-columns: minmax(0, 1fr);

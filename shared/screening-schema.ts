@@ -30,6 +30,12 @@ export const screeningConfigSchema = z
           "ja-JP",
         ]),
         voice: z.string().max(150),
+        interviewMode: z
+          .enum(["questionnaire", "live"])
+          .default("questionnaire"),
+        cameraPolicy: z
+          .enum(["optional", "required", "off"])
+          .default("optional"),
       })
       .strict(),
     context: z

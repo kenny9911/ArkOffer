@@ -5,6 +5,7 @@ import { hashToken, sessionUser, type User } from "./auth.js";
 import { AccessError } from "./access.js";
 import type { Store } from "./db.js";
 import type { createAi } from "./ai.js";
+import { requireReport } from "./report-collaboration.js";
 
 type Row = Record<string, any>;
 const fail = (status: number, message: string): never => {
@@ -83,13 +84,17 @@ export function registerReportDrafts(
         "SELECT * FROM report_ai_drafts WHERE id=? AND workspace_id=? AND user_id=?",
       )
       .get(id, user.workspaceId, user.id) as Row | undefined;
-  const current = (user: User, row: Row) =>
-    !row.view_id ||
-    !!db
-      .prepare(
-        "SELECT id FROM ai_report_views WHERE id=? AND workspace_id=? AND author_id=? AND revision=?",
-      )
-      .get(row.view_id, user.workspaceId, user.id, row.revision);
+  const current = (user: User, row: Row) => {
+    if (!row.view_id) return true;
+    try {
+      return (
+        requireReport(store, user, String(row.view_id), "edit").revision ===
+        row.revision
+      );
+    } catch {
+      return false;
+    }
+  };
   const view = (user: User, row: Row) => ({
     id: row.id,
     viewId: row.view_id,

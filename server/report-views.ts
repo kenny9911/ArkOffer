@@ -12,6 +12,13 @@ import {
 import type { createAi } from "./ai.js";
 import type { Resource, Store } from "./db.js";
 import { registerReportDrafts } from "./report-drafts.js";
+import { createMailTransport } from "./mail.js";
+import {
+  initializeReportCollaboration,
+  reportPermission,
+  requireReport,
+  registerReportCollaboration,
+} from "./report-collaboration.js";
 import {
   aggregateRun,
   defaultPresentation,
@@ -109,7 +116,15 @@ const csv = (value: unknown) => {
 export function registerReportViews(
   app: Express,
   store: Store,
-  { ai }: { ai: ReturnType<typeof createAi> },
+  {
+    ai,
+    mail = createMailTransport(),
+    clock,
+  }: {
+    ai: ReturnType<typeof createAi>;
+    mail?: ReturnType<typeof createMailTransport>;
+    clock?: () => number;
+  },
 ) {
   store.db.exec(`
     CREATE TABLE IF NOT EXISTS ai_report_views (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), author_id TEXT NOT NULL REFERENCES users(id), revision INTEGER NOT NULL DEFAULT 1, definition TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -160,6 +175,7 @@ export function registerReportViews(
       "ALTER TABLE ai_report_views ADD COLUMN presentation_revision INTEGER NOT NULL DEFAULT 1",
     );
   }
+  initializeReportCollaboration(store);
   registerReportDrafts(app, store, { ai });
   // A process crash may have sent a paid request. Never retry it automatically.
   store.transaction(() => {
@@ -186,21 +202,24 @@ export function registerReportViews(
   const fresh = (req: Request) =>
     sessionUser(store, req) ||
     fail(401, "Please sign in to use private AI reports.");
-  const ownedView = (user: User, id: string) =>
-    (store.db
-      .prepare(
-        "SELECT * FROM ai_report_views WHERE id=? AND workspace_id=? AND author_id=?",
-      )
-      .get(id, user.workspaceId, user.id) as Row | undefined) ||
-    fail(404, "Report view not found.");
-  const ownedRun = (user: User, viewId: string, runId: string) => {
-    ownedView(user, viewId);
+  const ownedView = (
+    user: User,
+    id: string,
+    action: "read" | "edit" | "manage" = "read",
+  ) => requireReport(store, user, id, action);
+  const ownedRun = (
+    user: User,
+    viewId: string,
+    runId: string,
+    action: "read" | "edit" = "read",
+  ) => {
+    ownedView(user, viewId, action);
     return (
       (store.db
         .prepare(
-          "SELECT * FROM ai_report_runs WHERE id=? AND view_id=? AND workspace_id=? AND author_id=?",
+          "SELECT * FROM ai_report_runs WHERE id=? AND view_id=? AND workspace_id=?",
         )
-        .get(runId, viewId, user.workspaceId, user.id) as Row | undefined) ||
+        .get(runId, viewId, user.workspaceId) as Row | undefined) ||
       fail(404, "Report run not found.")
     );
   };
@@ -250,8 +269,28 @@ export function registerReportViews(
       unavailableSourceCount: definition.sourceIds.length - ids.length,
       id: row.id,
       revision: row.revision,
-      favorite: Boolean(row.favorite),
-      ownerName: user.name,
+      favorite: Boolean(
+        store.db
+          .prepare(
+            "SELECT favorite FROM ai_report_preferences WHERE view_id=? AND user_id=?",
+          )
+          .get(String(row.id), user.id)?.favorite ??
+        (row.author_id === user.id ? row.favorite : false),
+      ),
+      ownerName:
+        userById(store, String(row.author_id), user.workspaceId)?.name ||
+        "Report owner",
+      permission: reportPermission(store, user, row),
+      canEdit: reportPermission(store, user, row) !== "viewer",
+      canManage: row.author_id === user.id,
+      shared:
+        Number(
+          store.db
+            .prepare(
+              "SELECT COUNT(*) AS n FROM ai_report_grants WHERE view_id=?",
+            )
+            .get(String(row.id))?.n,
+        ) > 0,
       presentation: row.presentation
         ? JSON.parse(String(row.presentation))
         : defaultPresentation,
@@ -326,6 +365,41 @@ export function registerReportViews(
       rows,
     };
   }
+  const collaboration = registerReportCollaboration(app, store, {
+    mail,
+    clock,
+    publicRun,
+    matchingSourceIds(user, row) {
+      const definition = JSON.parse(String(row.definition)) as Definition;
+      const accessible = definition.sourceIds.filter((id) =>
+        Boolean(source(user, id)),
+      );
+      return validateSources(user, {
+        ...definition,
+        sourceIds: accessible,
+      }).map((item) => item.id);
+    },
+    upcoming(user, row) {
+      const definition = JSON.parse(String(row.definition)) as Definition;
+      const accessible = definition.sourceIds.filter((id) =>
+        Boolean(source(user, id)),
+      );
+      return validateSources(user, { ...definition, sourceIds: accessible })
+        .filter(
+          (item) =>
+            item.status === "upcoming" &&
+            typeof item.date === "string" &&
+            /T\d{2}:\d{2}/.test(item.date) &&
+            /(?:Z|[+-]\d{2}:\d{2})$/.test(item.date) &&
+            Number.isFinite(Date.parse(item.date)),
+        )
+        .map((item) => ({
+          id: item.id,
+          title: String(item.title || "Untitled conversation"),
+          date: String(item.date),
+        }));
+    },
+  });
   function detail(user: User, id: string) {
     const row = ownedView(user, id);
     return {
@@ -333,9 +407,9 @@ export function registerReportViews(
       runs: (
         store.db
           .prepare(
-            "SELECT * FROM ai_report_runs WHERE view_id=? AND workspace_id=? AND author_id=? ORDER BY created_at DESC,id DESC LIMIT 25",
+            "SELECT * FROM ai_report_runs WHERE view_id=? AND workspace_id=? ORDER BY created_at DESC,id DESC LIMIT 25",
           )
-          .all(id, user.workspaceId, user.id) as Row[]
+          .all(id, user.workspaceId) as Row[]
       ).map((run) => publicRun(user, run)),
     };
   }
@@ -417,10 +491,12 @@ export function registerReportViews(
       items: (
         store.db
           .prepare(
-            "SELECT * FROM ai_report_views WHERE workspace_id=? AND author_id=? ORDER BY updated_at DESC LIMIT 100",
+            "SELECT v.* FROM ai_report_views v WHERE workspace_id=? AND (author_id=? OR EXISTS(SELECT 1 FROM ai_report_grants g WHERE g.view_id=v.id AND g.user_id=?)) ORDER BY updated_at DESC LIMIT 200",
           )
-          .all(user.workspaceId, user.id) as Row[]
-      ).map((row) => publicView(user, row)),
+          .all(user.workspaceId, user.id, user.id) as Row[]
+      )
+        .filter((row) => reportPermission(store, user, row))
+        .map((row) => publicView(user, row)),
       sources: sources(user),
       setup: {
         configured: ai.allowed(user.workspaceId),
@@ -458,7 +534,7 @@ export function registerReportViews(
   app.patch("/api/report-views/:id", (req, res) => {
     const user = fresh(req),
       id = String(req.params.id),
-      old = ownedView(user, id);
+      old = ownedView(user, id, "edit");
     const { revision, definition } = z
       .object({
         revision: z.number().int().positive(),
@@ -468,6 +544,16 @@ export function registerReportViews(
       .parse(req.body);
     if (revision !== old.revision)
       fail(409, "The report view changed. Reload before saving.");
+    if (
+      old.author_id !== user.id &&
+      JSON.parse(String(old.definition)).sourceIds.some(
+        (sourceId: string) => !source(user, sourceId),
+      )
+    )
+      fail(
+        409,
+        "You cannot replace this definition while some saved sources are unavailable. Ask the owner to share those conversations separately.",
+      );
     validateSources(user, definition);
     for (const row of store.db
       .prepare(
@@ -492,14 +578,16 @@ export function registerReportViews(
     ownedView(user, id);
     const input = z.object({ favorite: z.boolean() }).strict().parse(req.body);
     store.db
-      .prepare("UPDATE ai_report_views SET favorite=? WHERE id=?")
-      .run(Number(input.favorite), id);
+      .prepare(
+        "INSERT INTO ai_report_preferences(view_id,user_id,favorite) VALUES(?,?,?) ON CONFLICT(view_id,user_id) DO UPDATE SET favorite=excluded.favorite",
+      )
+      .run(id, user.id, Number(input.favorite));
     res.json(detail(user, id));
   });
   app.patch("/api/report-views/:id/presentation", (req, res) => {
     const user = fresh(req),
       id = String(req.params.id),
-      view = ownedView(user, id);
+      view = ownedView(user, id, "edit");
     const input = z
       .object({
         revision: z.number().int().positive(),
@@ -578,7 +666,7 @@ export function registerReportViews(
   app.delete("/api/report-views/:id", (req, res) => {
     const user = fresh(req),
       id = String(req.params.id);
-    ownedView(user, id);
+    ownedView(user, id, "manage");
     for (const row of store.db
       .prepare("SELECT id FROM ai_report_runs WHERE view_id=?")
       .all(id))
@@ -589,7 +677,7 @@ export function registerReportViews(
   app.post("/api/report-views/:id/runs", (req, res) => {
     const user = fresh(req),
       id = String(req.params.id),
-      view = ownedView(user, id);
+      view = ownedView(user, id, "edit");
     const input = z
       .object({
         consent: z.literal(true),
@@ -720,7 +808,12 @@ export function registerReportViews(
   });
   app.post("/api/report-views/:id/runs/:runId/cancel", (req, res) => {
     const user = fresh(req),
-      run = ownedRun(user, String(req.params.id), String(req.params.runId));
+      run = ownedRun(
+        user,
+        String(req.params.id),
+        String(req.params.runId),
+        "edit",
+      );
     cancelRun(String(run.id));
     res.json({
       item: publicRun(
@@ -731,7 +824,12 @@ export function registerReportViews(
   });
   app.patch("/api/report-views/:id/runs/:runId/cells/:cellId", (req, res) => {
     const user = fresh(req),
-      run = ownedRun(user, String(req.params.id), String(req.params.runId));
+      run = ownedRun(
+        user,
+        String(req.params.id),
+        String(req.params.runId),
+        "edit",
+      );
     const { annotation } = z
       .object({ annotation: z.string().max(4_000) })
       .strict()
@@ -807,9 +905,16 @@ export function registerReportViews(
         String(run.workspace_id),
         Date.now(),
       );
-    return session
+    const user = session
       ? userById(store, String(run.author_id), String(run.workspace_id))
       : undefined;
+    if (!user) return undefined;
+    try {
+      ownedView(user, String(run.view_id), "edit");
+      return user;
+    } catch {
+      return undefined;
+    }
   }
   function currentRun(run: Row) {
     const current = store.db
@@ -898,9 +1003,11 @@ export function registerReportViews(
   function tick(): Promise<void> {
     if (stopped) return Promise.resolve();
     if (activeTick) return activeTick;
-    activeTick = processTick().finally(() => {
-      activeTick = undefined;
-    });
+    activeTick = processTick()
+      .then(() => collaboration.tick())
+      .finally(() => {
+        activeTick = undefined;
+      });
     return activeTick;
   }
   async function processTick() {
@@ -1126,7 +1233,10 @@ export function registerReportViews(
     start() {
       if (timer) return;
       stopped = false;
+      collaboration.start();
       timer = setInterval(() => {
+        // Mail scheduling must not wait behind a slow multi-source AI extraction.
+        void collaboration.tick().catch(() => {});
         void tick().catch(() => {
           /* Durable processing state is interrupted on restart; never paid-retried. */
         });
@@ -1146,7 +1256,9 @@ export function registerReportViews(
         );
       // Cancellation can settle on a later microtask after the provider aborts.
       // Drain its finally/catch work before callers close the shared database.
+      const mailDrain = collaboration.stop();
       await activeTick;
+      await mailDrain;
     },
   };
 }
