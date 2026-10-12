@@ -528,6 +528,12 @@ svg {
 }
 /* Workspace frame */
 .workspace {
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   display: grid;
   grid-template-columns: 235px minmax(0, 1fr);
   height: 100dvh;
@@ -541,6 +547,11 @@ svg {
 }
 .workspace.collapsed {
   grid-template-columns: 68px minmax(0, 1fr);
+}
+@media (min-width: 701px) {
+  .topbar.workspace-mobile-header {
+    display: none;
+  }
 }
 .sidebar {
   border-right: 1px solid var(--border);

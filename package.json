@@ -15,7 +15,7 @@
     "check": "npm run test && npm run build",
     "dev:api": "NODE_ENV=development node --env-file-if-exists=.env --import tsx --watch server/index.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "format:check": "prettier --check client server tests *.ts *.json .github/workflows/ci.yml"
+    "format:check": "prettier --check client server shared tests *.ts *.json .github/workflows/ci.yml"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",

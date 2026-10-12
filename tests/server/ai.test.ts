@@ -295,12 +295,101 @@ test("AI request cancellation is propagated and a previously aborted action neve
   });
   const pending = second.complete(messages, false, {
     signal: controller.signal,
+    timeoutMs: 120_000,
   });
   await started;
   controller.abort();
   await assert.rejects(
     pending,
-    (error) => error instanceof AiError && !error.message.includes("secret"),
+    (error) =>
+      error instanceof AiError &&
+      error.message === "The AI request was cancelled.",
   );
   assert.equal(count, 1);
+});
+
+test("AI per-call deadlines default to 60 seconds and cannot exceed 120 seconds", async (t) => {
+  const deadlines: number[] = [];
+  t.mock.method(AbortSignal, "timeout", (milliseconds: number) => {
+    deadlines.push(milliseconds);
+    return new AbortController().signal;
+  });
+  const ai = createAi({
+    env: configured(),
+    fetch: (async () => success()) as typeof fetch,
+  });
+  for (const timeoutMs of [
+    undefined,
+    120_000,
+    900_000,
+    0,
+    -1,
+    501.9,
+    NaN,
+    Infinity,
+    "120000" as unknown as number,
+  ])
+    await ai.complete(messages, false, { timeoutMs });
+  assert.deepEqual(
+    deadlines,
+    [60_000, 120_000, 120_000, 1, 1, 501, 60_000, 60_000, 60_000],
+  );
+});
+
+test("AI deadline aborts both transport and response reading without retries or provider-detail leakage", async (t) => {
+  for (const phase of ["transport", "body"] as const) {
+    const deadline = new AbortController();
+    const timer = t.mock.method(AbortSignal, "timeout", () => deadline.signal);
+    let calls = 0;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const ai = createAi({
+      env: configured(),
+      fetch: (async (_url, init) => {
+        calls++;
+        const signal = init!.signal!;
+        if (phase === "body")
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    controller.error(
+                      new Error("secret provider response detail"),
+                    );
+                  },
+                  { once: true },
+                );
+                entered();
+              },
+            }),
+          );
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new Error("secret provider transport detail"));
+            },
+            { once: true },
+          );
+          entered();
+        });
+      }) as typeof fetch,
+    });
+    const pending = ai.complete(messages, false, { timeoutMs: 120_000 });
+    await started;
+    deadline.abort();
+    await assert.rejects(
+      pending,
+      (error) =>
+        error instanceof AiError &&
+        error.message ===
+          "The AI provider took too long to respond. Please try again.",
+    );
+    assert.equal(calls, 1);
+    timer.mock.restore();
+  }
 });

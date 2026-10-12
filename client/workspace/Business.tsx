@@ -31,7 +31,9 @@ import CandidateEnrichment from "./CandidateEnrichment";
 import AiReports from "./AiReports";
 import ApplicationReview from "./ApplicationReview";
 import JobDrafting from "./JobDrafting";
-import SequenceDelivery from "./SequenceDelivery";
+import SequenceWorkspace from "./SequenceWorkspace";
+import SourcingWorkspace from "./SourcingWorkspace";
+import ScreeningDrafting from "./ScreeningDrafting";
 
 type Item = {
   id: string;
@@ -39,12 +41,12 @@ type Item = {
   title?: string;
   [key: string]: unknown;
 };
-type Step = { subject: string; body: string; delayDays: number };
 type Question = {
   prompt: string;
   type: string;
   options: string[];
   required: boolean;
+  rubric?: string;
 };
 const str = (value: unknown, fallback = "") =>
   typeof value === "string" ? value : fallback;
@@ -1051,404 +1053,6 @@ function SimpleNameDialog({
   );
 }
 
-function Sequences() {
-  const sequences = useResource("sequences");
-  const candidates = useResource("candidates");
-  const [query, setQuery] = useState("");
-  const [editing, setEditing] = useState<Item | "new" | null>(null);
-  const [enrolling, setEnrolling] = useState<Item | null>(null);
-  const [deleting, setDeleting] = useState<Item | null>(null);
-  const [delivery, setDelivery] = useState<string | null>(null);
-  const shown = sequences.items.filter((item) =>
-    label(item).toLowerCase().includes(query.toLowerCase()),
-  );
-  return (
-    <div className="business">
-      <div className="business-intro">
-        <div>
-          <h2>Thoughtful outreach, one step at a time.</h2>
-          <p>
-            Build reusable outreach drafts and organize your candidate
-            enrollments.
-          </p>
-        </div>
-        <Btn onClick={() => setEditing("new")}>
-          <Plus size={16} />
-          Create sequence
-        </Btn>
-      </div>
-      <div className="business-provider-note">
-        <Mail size={17} />
-        <span>
-          <strong>Draft workspace</strong> — Drafts and enrollments are saved;
-          messages are not sent. Open Delivery to review recipients and
-          explicitly launch a schedule. Local outbox is the default until a
-          sender is configured.
-        </span>
-      </div>
-      <div className="business-panel">
-        <div className="business-panel-toolbar">
-          <h3>
-            All sequences <span>{sequences.items.length}</span>
-          </h3>
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder="Search sequences"
-          />
-        </div>
-        {sequences.error && <Alert>{sequences.error}</Alert>}
-        {sequences.loading ? (
-          <Loading />
-        ) : !shown.length ? (
-          <Empty
-            icon={<Mail size={25} />}
-            title={
-              query ? "No matching sequences" : "Make your first introduction"
-            }
-            description={
-              query
-                ? "Try another sequence name."
-                : "Create a sequence with a personal introduction and follow-up steps."
-            }
-          >
-            <Btn onClick={() => setEditing("new")}>
-              <Plus size={15} />
-              Create sequence
-            </Btn>
-          </Empty>
-        ) : (
-          <div className="business-table-scroll">
-            <table className="business-table">
-              <thead>
-                <tr>
-                  <th>Sequence</th>
-                  <th>Status</th>
-                  <th>Steps</th>
-                  <th>Enrolled</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <button
-                        className="business-link"
-                        onClick={() => setEditing(item)}
-                      >
-                        {label(item)}
-                      </button>
-                      <small>{str(item.description)}</small>
-                    </td>
-                    <td>
-                      <Badge value="draft" />
-                    </td>
-                    <td>{Array.isArray(item.steps) ? item.steps.length : 0}</td>
-                    <td>{stringList(item.enrolledCandidateIds).length}</td>
-                    <td>
-                      <div className="business-row-actions">
-                        <Btn secondary onClick={() => setDelivery(item.id)}>
-                          Delivery
-                        </Btn>
-                        <Btn secondary onClick={() => setEnrolling(item)}>
-                          Enroll candidates
-                        </Btn>
-                        <IconButton
-                          label={`Edit ${label(item)}`}
-                          onClick={() => setEditing(item)}
-                        >
-                          <Pencil size={15} />
-                        </IconButton>
-                        <IconButton
-                          label={`Delete ${label(item)}`}
-                          onClick={() => setDeleting(item)}
-                        >
-                          <Trash2 size={15} />
-                        </IconButton>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-      {editing && (
-        <SequenceForm
-          item={editing === "new" ? undefined : editing}
-          onClose={() => setEditing(null)}
-          onSave={async (data) => {
-            await sequences.save(
-              data,
-              editing === "new" ? undefined : editing.id,
-            );
-            setEditing(null);
-          }}
-        />
-      )}
-      {enrolling && (
-        <EnrollmentDialog
-          item={enrolling}
-          candidates={candidates.items}
-          loading={candidates.loading}
-          loadError={candidates.error}
-          onClose={() => setEnrolling(null)}
-          onSave={async (ids) => {
-            await sequences.save({ enrolledCandidateIds: ids }, enrolling.id);
-            setEnrolling(null);
-          }}
-        />
-      )}
-      {delivery && (
-        <SequenceDelivery
-          sequenceId={delivery}
-          onClose={() => setDelivery(null)}
-        />
-      )}
-      {deleting && (
-        <Confirm
-          title="Delete sequence?"
-          description={`Delete ${label(deleting)} and its draft steps? Candidate records will remain in your library.`}
-          onClose={() => setDeleting(null)}
-          onConfirm={() => sequences.remove(deleting.id)}
-        />
-      )}
-    </div>
-  );
-}
-function SequenceForm({
-  item,
-  onClose,
-  onSave,
-}: {
-  item?: Item;
-  onClose: () => void;
-  onSave: (data: Record<string, unknown>) => Promise<void>;
-}) {
-  const [steps, setSteps] = useState<Step[]>(
-    Array.isArray(item?.steps) && item.steps.length
-      ? (item.steps as Step[])
-      : [{ subject: "", body: "", delayDays: 0 }],
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const update = (index: number, data: Partial<Step>) =>
-    setSteps((current) =>
-      current.map((step, i) => (i === index ? { ...step, ...data } : step)),
-    );
-  return (
-    <Dialog
-      title={item ? "Edit sequence" : "Create sequence"}
-      onClose={onClose}
-      wide
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const data = Object.fromEntries(new FormData(e.currentTarget));
-          setBusy(true);
-          try {
-            await onSave({ ...data, steps, status: "draft" });
-          } catch (err) {
-            setError(errorMessage(err));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <div className="business-form-grid">
-          <FormField label="Sequence name">
-            <input
-              name="name"
-              required
-              defaultValue={item?.name}
-              placeholder="Engineering outreach"
-            />
-          </FormField>
-          <FormField label="Description">
-            <input
-              name="description"
-              defaultValue={str(item?.description)}
-              placeholder="Who is this sequence for?"
-            />
-          </FormField>
-        </div>
-        <div className="business-step-list">
-          {steps.map((step, i) => (
-            <div className="business-step" key={i}>
-              <div className="business-step-heading">
-                <span className="business-step-number">{i + 1}</span>
-                <h4>{i === 0 ? "Introduction" : "Follow-up"}</h4>
-                {steps.length > 1 && (
-                  <IconButton
-                    label={`Remove step ${i + 1}`}
-                    onClick={() =>
-                      setSteps((current) =>
-                        current.filter((_, index) => index !== i),
-                      )
-                    }
-                  >
-                    <Trash2 size={15} />
-                  </IconButton>
-                )}
-              </div>
-              {i > 0 && (
-                <FormField label="Days after the previous step">
-                  <input
-                    type="number"
-                    min="1"
-                    max="365"
-                    required
-                    value={step.delayDays}
-                    onChange={(e) =>
-                      update(i, { delayDays: Number(e.target.value) })
-                    }
-                  />
-                </FormField>
-              )}
-              <FormField label="Subject">
-                <input
-                  required
-                  value={step.subject}
-                  onChange={(e) => update(i, { subject: e.target.value })}
-                  placeholder="A new opportunity"
-                />
-              </FormField>
-              <FormField label="Message">
-                <textarea
-                  required
-                  rows={5}
-                  value={step.body}
-                  onChange={(e) => update(i, { body: e.target.value })}
-                  placeholder="Write your message…"
-                />
-              </FormField>
-            </div>
-          ))}
-        </div>
-        <Btn
-          secondary
-          type="button"
-          onClick={() =>
-            setSteps((current) => [
-              ...current,
-              { subject: "", body: "", delayDays: 3 },
-            ])
-          }
-        >
-          <Plus size={15} />
-          Add step
-        </Btn>
-        <p className="business-help">
-          These messages remain drafts. Mailbox connection and a delivery
-          provider are required to send them.
-        </p>
-        {error && <Alert>{error}</Alert>}
-        <div className="business-dialog-actions">
-          <Btn secondary type="button" onClick={onClose}>
-            Cancel
-          </Btn>
-          <Btn disabled={busy}>{busy ? "Saving…" : "Save draft"}</Btn>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-function EnrollmentDialog({
-  item,
-  candidates,
-  loading,
-  loadError,
-  onClose,
-  onSave,
-}: {
-  item: Item;
-  candidates: Item[];
-  loading: boolean;
-  loadError: string;
-  onClose: () => void;
-  onSave: (ids: string[]) => Promise<void>;
-}) {
-  const [ids, setIds] = useState<string[]>(
-    stringList(item.enrolledCandidateIds),
-  );
-  const [query, setQuery] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const selected = new Set(ids);
-  const shown = candidates.filter((candidate) =>
-    `${label(candidate)} ${str(candidate.email)}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
-  );
-  return (
-    <Dialog title={`Enroll in ${label(item)}`} onClose={onClose}>
-      <p className="business-dialog-copy">
-        Save candidates to this draft sequence. No messages will be sent.
-      </p>
-      <SearchInput
-        value={query}
-        onChange={setQuery}
-        placeholder="Find candidates"
-      />
-      {loadError && <Alert>{loadError}</Alert>}
-      {loading ? (
-        <Loading />
-      ) : !candidates.length ? (
-        <p className="business-help">
-          Add candidates in Sourcing before enrolling them.
-        </p>
-      ) : (
-        <div className="business-check-list">
-          {shown.map((candidate) => (
-            <label key={candidate.id}>
-              <input
-                type="checkbox"
-                checked={selected.has(candidate.id)}
-                onChange={(e) =>
-                  setIds((current) =>
-                    e.target.checked
-                      ? [...current, candidate.id]
-                      : current.filter((id) => id !== candidate.id),
-                  )
-                }
-              />
-              <span>
-                <strong>{label(candidate)}</strong>
-                <small>{str(candidate.email, "No email added")}</small>
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-      {error && <Alert>{error}</Alert>}
-      <div className="business-dialog-actions">
-        <span className="business-muted">{ids.length} enrolled</span>
-        <Btn secondary onClick={onClose}>
-          Cancel
-        </Btn>
-        <Btn
-          disabled={busy || loading || !!loadError}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await onSave(ids);
-            } catch (e) {
-              setError(errorMessage(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Saving…" : "Save enrollment"}
-        </Btn>
-      </div>
-    </Dialog>
-  );
-}
-
 const applicationStatuses = [
   "applied",
   "in_review",
@@ -1768,6 +1372,8 @@ function Screening() {
   const [deleting, setDeleting] = useState<Item | null>(null);
   const [publishing, setPublishing] = useState<Item | null>(null);
   const [responses, setResponses] = useState<Item | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [draftProposal, setDraftProposal] = useState<Record<string, unknown>>();
   return (
     <div className="business">
       <div className="business-intro">
@@ -1778,10 +1384,20 @@ function Screening() {
             responses with your team.
           </p>
         </div>
-        <Btn onClick={() => setEditing("new")}>
-          <Plus size={16} />
-          Create screening
-        </Btn>
+        <div className="business-actions">
+          <Btn secondary onClick={() => setDrafting(true)}>
+            <Sparkles size={16} /> Draft screening with AI
+          </Btn>
+          <Btn
+            onClick={() => {
+              setDraftProposal(undefined);
+              setEditing("new");
+            }}
+          >
+            <Plus size={16} />
+            Create screening
+          </Btn>
+        </div>
       </div>
       <div className="business-provider-note">
         <CircleHelp size={17} />
@@ -1801,7 +1417,12 @@ function Screening() {
             title="Get to know candidates, your way"
             description="Build a reusable set of questions. Your team reviews responses and makes the decisions."
           >
-            <Btn onClick={() => setEditing("new")}>
+            <Btn
+              onClick={() => {
+                setDraftProposal(undefined);
+                setEditing("new");
+              }}
+            >
               <Plus size={15} />
               Create screening
             </Btn>
@@ -1856,9 +1477,21 @@ function Screening() {
           ))}
         </div>
       )}
+      {drafting && (
+        <ScreeningDrafting
+          jobs={jobs.items}
+          onClose={() => setDrafting(false)}
+          onUseDraft={(proposal) => {
+            setDraftProposal(proposal);
+            setDrafting(false);
+            setEditing("new");
+          }}
+        />
+      )}
       {editing && (
         <ScreeningForm
           item={editing === "new" ? undefined : editing}
+          initial={editing === "new" ? draftProposal : undefined}
           jobs={jobs.items}
           onClose={() => setEditing(null)}
           onSave={async (data) => {
@@ -2254,18 +1887,21 @@ function ScreeningResponses({
 }
 function ScreeningForm({
   item,
+  initial,
   jobs,
   onClose,
   onSave,
 }: {
   item?: Item;
+  initial?: Record<string, unknown>;
   jobs: Item[];
   onClose: () => void;
   onSave: (data: Record<string, unknown>) => Promise<void>;
 }) {
+  const seed = item || initial;
   const [questions, setQuestions] = useState<Question[]>(
-    Array.isArray(item?.questions)
-      ? (item.questions as Question[])
+    Array.isArray(seed?.questions)
+      ? (seed.questions as Question[])
       : [{ prompt: "", type: "text", options: [], required: true }],
   );
   const [busy, setBusy] = useState(false);
@@ -2323,12 +1959,12 @@ function ScreeningForm({
             <input
               name="title"
               required
-              defaultValue={item?.title || item?.name}
+              defaultValue={str(seed?.title || seed?.name)}
               placeholder="Introductory questions"
             />
           </FormField>
           <FormField label="Job">
-            <select name="jobId" defaultValue={str(item?.jobId)}>
+            <select name="jobId" defaultValue={str(seed?.jobId)}>
               <option value="">Any role</option>
               {jobs.map((job) => (
                 <option key={job.id} value={job.id}>
@@ -2342,7 +1978,7 @@ function ScreeningForm({
           <textarea
             name="description"
             rows={2}
-            defaultValue={str(item?.description)}
+            defaultValue={str(seed?.description)}
             placeholder="Tell candidates what to expect."
           />
         </FormField>
@@ -2392,6 +2028,18 @@ function ScreeningForm({
                   Required question
                 </label>
               </div>
+              <FormField
+                label="Review rubric"
+                hint="Private guidance for your team. Never included in the candidate link."
+              >
+                <textarea
+                  rows={2}
+                  maxLength={2000}
+                  value={question.rubric || ""}
+                  onChange={(e) => update(i, { rubric: e.target.value })}
+                  placeholder="What evidence should the reviewer look for?"
+                />
+              </FormField>
               {question.type === "multiple-choice" && (
                 <FormField
                   label="Answer options"
@@ -3232,8 +2880,10 @@ function Fillmore() {
 }
 
 export default function Business({ section }: { section: string }) {
-  if (section === "sourcing" || section === "candidates") return <Candidates />;
-  if (section === "sequences") return <Sequences />;
+  if (section === "sourcing")
+    return <SourcingWorkspace candidateLibrary={<Candidates />} />;
+  if (section === "candidates") return <Candidates />;
+  if (section === "sequences") return <SequenceWorkspace />;
   if (section === "applications") return <Applications />;
   if (section === "screening" || section === "screenings") return <Screening />;
   if (section === "jobs" || section === "job-posts") return <Jobs />;

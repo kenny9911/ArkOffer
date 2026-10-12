@@ -192,7 +192,7 @@ Provider endpoints and download hosts are constrained, requests are bounded, loc
 
 ## Outreach delivery
 
-Sequence draft `steps` use `{subject,body,delayDays}` and `enrolledCandidateIds` selects local candidate records.
+Sequence draft `steps` use `{kind,subject,body,delayDays,format,cc,bcc}`. Kinds are automatic `email` and manual `manual_email`, `linkedin_message`, `linkedin_connection`, `linkedin_inmail`, `call`, `sms`, `task`; missing kind preserves legacy email behavior. `format` is `plain` or `formatted` (restricted safe markup). Only automatic email supports copies, at most five distinct Cc/Bcc addresses per step. `enrolledCandidateIds` selects workspace candidates. Optional `settings` contains `{timezone,weekdays,startHour,endHour}` with an IANA timezone and Sunday=0 through Saturday=6.
 
 - `GET /api/sequences/:id/delivery/preview` → personalized recipients, eligibility, delivery mode/configuration and a revision hash.
 - `GET /api/sequences/:id/delivery` → current enrollments, messages, events and configuration.
@@ -203,6 +203,39 @@ Sequence draft `steps` use `{subject,body,delayDays}` and `enrolledCandidateIds`
 - Public `GET /api/outreach/unsubscribe/:token` displays a confirmation form; `POST` suppresses the recipient for that workspace and cancels future steps.
 
 Launch/control/status reconciliation require owner/admin. Outbox mode persists messages without delivery. Live mode requires the Resend configuration and workspace allowlist. Approved recipient/content snapshots, delays, idempotency keys and bounded retries persist. Unknown delivery outcomes require attention rather than blind retry. Replies are marked manually, not detected from an inbox. The server worker runs every 15 seconds; limits and setup are in the reconstruction document.
+
+Manual-only schedules can use candidates without email addresses. Manual-task completion explicitly advances the schedule and never transmits a message. Copied recipients participate in immutable approval, suppression checks and a durable 1,000-recipient-slot/workspace/24h ledger. The unsubscribe form accepts a copied recipient's own address without exposing Bcc or the recipient group. Message-level provider bounces suppress the approved group because polling cannot identify which copy bounced.
+
+## Sequence editor and private AI drafts
+
+- `GET /api/sequence-workspace` returns saved sequences, observed activity metrics, sender and AI availability.
+- `GET /api/sequence-workspace/:id` returns the sequence and revision fingerprint.
+- `POST /api/sequence-workspace` creates a validated draft; `PATCH /api/sequence-workspace/:id` requires the matching revision. Saving never launches delivery.
+- `GET /api/sequence-drafts` lists the author's private proposals; `POST` accepts `{requestId,instruction,draft,sequenceId?,revision?}`. The draft has name, description, steps, optional settings and candidate IDs. Candidate records and copied addresses are excluded from the model request; AI cannot add copies.
+
+Sequence generation has a 120-second deadline and observes request cancellation. Other text workflows retain their own configured bound or the shared 60-second default. Failed generation is recorded and does not retry automatically; replaying the same request identity returns its existing state.
+
+Generation uses the configured text model/allowlist, persistent request identity, 30/workspace/hour budget and at most two simultaneous calls. Saved-source edits invalidate proposals. The client explicitly applies a proposal to the editor; save and delivery approval remain separate. At most ten steps and 100 candidate IDs are accepted.
+
+## Private sourcing sessions
+
+- `GET /api/sourcing` returns private sessions, saved professional reference profiles and availability.
+- `POST /api/sourcing/sessions` accepts `{requestId,prompt,context?,mode?,source?,referenceId?,referenceProfiles?,manual?,exclusions?}`. Modes: `sourcing`, `lookalikes`, `market`, `talent`; sources: `workspace`, `pdl`. Up to five reference URLs resolve only to saved LinkedIn profiles.
+- `GET/PATCH/DELETE /api/sourcing/sessions/:id` reads, updates or discards an owned session. Updates require the numeric revision. Criteria contain bounded lists of titles, locations, skills, companies, keywords and excluded companies; `exclusions` is `{pastSearches,sequenced}`.
+- `POST /api/sourcing/sessions/:id/runs` requires `{requestId,revision,consent:true,size?,afterRunId?}`. Pack size is 1–25 (default 20). Pagination requires the preceding ready pack and unchanged criteria/library snapshot.
+- `PATCH /api/sourcing/sessions/:id/reviews` stores private reviews; `POST .../import` explicitly imports selected professional results to the candidate library.
+- `GET /api/sourcing/sessions/:id/runs/:runId/export.csv` exports an authorized result pack and private reviews with formula protection.
+
+Sessions/results/reviews are author/workspace-scoped. Changed/deleted workspace profiles are withheld from old results. History exclusions do not expose another user's searches. PDL requires its key and `SOURCING_WORKSPACE_IDS`; only selected professional resume fields are retained. Exclusions filter bounded PDL results after retrieval, so discarded results can consume credits. Failed/discarded paid requests still count: 15/user/hour, 40/workspace/hour and two concurrent requests. Sessions hold at most 50 packs. No global market estimate, external contact discovery or recruiting decision is generated.
+
+## Private screening question drafts
+
+- `GET /api/screening-drafts` lists owned drafts and AI availability.
+- `POST /api/screening-drafts` accepts `{requestId,brief,context?,jobId?,questionCount?,consent:true}`. Brief/context are at most 12,000 characters each; question count is 3–10 (default 5). Only role data is sent to the model.
+- `POST /api/screening-drafts/:id/apply` requires `{confirm:true}` and returns an editable proposal with questions and private rubrics. No shared screening or candidate link is created.
+- `DELETE /api/screening-drafts/:id` discards the draft and aborts active generation where possible; its paid-request identity and budget remain reserved.
+
+Job fingerprints, session identity and provider access are rechecked after generation and before apply. Limits: 15/user/hour, 30/workspace/hour, two active requests, 100 retained drafts/user, 45-second deadline and 6,000 output tokens. The manual editor saves reviewed questions; publication strips private rubrics from public snapshots.
 
 ## Billing
 

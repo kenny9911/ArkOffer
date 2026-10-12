@@ -29,7 +29,7 @@ async function setup(page: Page, baseURL: string | undefined) {
 }
 
 async function openCandidate(page: Page) {
-  await page.goto("/app/sourcing");
+  await page.goto("/app/candidates");
   await page
     .getByRole("button", { name: "Jamie Enrichment jamie@synthetic.example" })
     .click();

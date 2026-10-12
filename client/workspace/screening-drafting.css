@@ -1,0 +1,224 @@
+.screening-drafting {
+  display: grid;
+  gap: 24px;
+}
+.screening-drafting-intro {
+  text-align: center;
+  padding: 10px 20px 5px;
+}
+.screening-drafting-intro > span {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: #245845;
+  background: #e7f5ee;
+  margin-bottom: 18px;
+}
+.screening-drafting-intro h2 {
+  font-size: 25px;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+.screening-drafting-intro > p {
+  max-width: 570px;
+  margin: 12px auto 0;
+  color: #707772;
+  line-height: 1.5;
+}
+.screening-drafting form {
+  display: grid;
+  gap: 16px;
+}
+.screening-drafting-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.screening-drafting-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #535f58;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.screening-drafting-check > input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.screening-drafting-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.screening-drafting-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  border-top: 1px solid #e8eae7;
+  padding-top: 22px;
+}
+.screening-drafting-steps strong {
+  font-weight: 500;
+}
+.screening-drafting-steps p {
+  font-size: 12px;
+  color: #808780;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+.screening-drafting-unavailable {
+  background: #fff7e7;
+  border: 1px solid #e8dcc0;
+  border-radius: 9px;
+  padding: 14px;
+  color: #715f3b;
+  font-size: 13px;
+}
+.screening-drafting-preview {
+  background: #fbfcfb;
+  border: 1px solid #dfe5df;
+  border-radius: 12px;
+  padding: 24px;
+}
+.screening-drafting-preview-title {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.screening-drafting-preview-title > h3 {
+  font-size: 18px;
+  flex: 1;
+}
+.screening-drafting-preview-title > span {
+  color: #6d806f;
+  font-size: 11px;
+  background: #edf3ed;
+  padding: 5px 9px;
+  border-radius: 6px;
+}
+.screening-drafting-preview > p {
+  color: #6a756b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.screening-drafting-preview > ol {
+  list-style: decimal;
+  padding-left: 25px;
+  margin: 24px 0;
+  display: grid;
+  gap: 24px;
+}
+.screening-drafting-preview h4 {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.screening-drafting-preview li > small {
+  display: block;
+  color: #788579;
+  font-size: 11px;
+  margin: 6px 0;
+}
+.screening-drafting-preview li > ul {
+  list-style: disc;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #626f64;
+}
+.screening-drafting-rubric {
+  border-left: 2px solid #93b69d;
+  padding-left: 14px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #6a776b;
+}
+.screening-drafting-rubric > strong {
+  font-weight: 500;
+  color: #3e5744;
+}
+.screening-drafting-rubric > p {
+  line-height: 1.5;
+  margin-top: 5px;
+}
+.screening-drafting-notes {
+  padding: 15px;
+  background: #f2f4ee;
+  margin-bottom: 20px;
+  border-radius: 8px;
+}
+.screening-drafting-notes ul {
+  list-style: disc;
+  padding-left: 18px;
+  color: #6c756a;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+.screening-drafting-preview > .btn {
+  margin-top: 16px;
+}
+.screening-drafting-small {
+  font-size: 12px !important;
+  margin-top: 14px;
+}
+.screening-drafting-history > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.screening-drafting-history h3 {
+  font-size: 15px;
+}
+.screening-drafting-history > p {
+  color: #7b837d;
+  font-size: 13px;
+}
+.screening-drafting-history-row {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid #eceeeb;
+  padding: 10px 0;
+  gap: 15px;
+}
+.screening-drafting-history-row > button:first-child {
+  background: transparent;
+  border: 0;
+  padding: 5px 0;
+  text-align: left;
+  flex: 1;
+  color: #344d3c;
+  cursor: pointer;
+}
+.screening-drafting-history-row > button:first-child > span {
+  display: block;
+  font-size: 13px;
+}
+.screening-drafting-history-row small {
+  display: block;
+  font-size: 11px;
+  color: #859087;
+  margin-top: 5px;
+}
+@media (max-width: 640px) {
+  .screening-drafting-intro {
+    padding: 0;
+  }
+  .screening-drafting-intro h2 {
+    font-size: 22px;
+  }
+  .screening-drafting-options,
+  .screening-drafting-steps {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  .screening-drafting-preview {
+    padding: 17px;
+  }
+}

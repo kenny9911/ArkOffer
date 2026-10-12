@@ -14,6 +14,9 @@ export type OutboundMail = {
   to: string;
   subject: string;
   text: string;
+  html?: string;
+  cc?: string[];
+  bcc?: string[];
   idempotencyKey: string;
   unsubscribeUrl?: string;
 };
@@ -138,6 +141,9 @@ export function createMailTransport(
           to: [message.to],
           subject: message.subject,
           text: message.text,
+          ...(message.html ? { html: message.html } : {}),
+          ...(message.cc?.length ? { cc: message.cc } : {}),
+          ...(message.bcc?.length ? { bcc: message.bcc } : {}),
           ...(config.replyTo ? { reply_to: config.replyTo } : {}),
           ...(message.unsubscribeUrl
             ? { headers: { "List-Unsubscribe": `<${message.unsubscribeUrl}>` } }
