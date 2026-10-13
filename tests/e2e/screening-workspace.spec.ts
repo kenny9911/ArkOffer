@@ -210,8 +210,24 @@ test("stale screening save keeps local edits and fails closed until the user rel
   await page
     .getByLabel("Screening title", { exact: true })
     .fill("Original screening");
+  // Creation redirects into an editor that fetches its saved revision. A
+  // teammate change must happen after that fetch to exercise a stale save.
+  const initialEditor = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.status() === 200 &&
+      /\/api\/screening-workspaces\/[0-9a-f-]+$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/screening\/[0-9a-f-]+/);
+  expect((await (await initialEditor).json()).item.title).toBe(
+    "Original screening",
+  );
+  await expect(page.getByLabel("Screening title", { exact: true })).toHaveValue(
+    "Original screening",
+  );
   const id = new URL(page.url()).pathname.split("/").pop();
   const original = (
     await (await page.request.get(`/api/screening-workspaces/${id}`)).json()

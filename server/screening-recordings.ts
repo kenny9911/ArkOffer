@@ -17,7 +17,11 @@ import {
   ListObjectVersionsCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { isWorkspaceAdmin, sessionUser } from "./auth.js";
+import { isWorkspaceAdmin, sessionUser, type User } from "./auth.js";
+import {
+  registerScreeningMedia,
+  type ScreeningMediaProcessor,
+} from "./screening-media.js";
 import type { Store } from "./db.js";
 
 const DAY = 86_400_000;
@@ -56,9 +60,10 @@ export type RecordingAdapter = {
 type Options = {
   env?: NodeJS.ProcessEnv;
   adapter?: RecordingAdapter;
+  mediaProcessor?: ScreeningMediaProcessor;
   now?: () => number;
 };
-type Recording = {
+export type Recording = {
   id: string;
   session_id: string;
   workspace_id: string;
@@ -655,19 +660,13 @@ export function registerScreeningRecordings(
       });
     return running;
   }
-  function authorize(req: Request) {
-    const user = sessionUser(store, req);
-    if (!user) return fail(401, "Sign in to review interview recordings.");
+  function rowsFor(user: User, screeningId: string, responseId: string) {
     const response = store.db
       .prepare(
         `SELECT a.publication_id,a.answers,a.live_session_id FROM screening_responses a JOIN resources r ON r.id=a.screening_id AND r.workspace_id=a.workspace_id
       WHERE a.id=? AND a.screening_id=? AND a.workspace_id=? AND r.kind='screenings'`,
       )
-      .get(
-        String(req.params.responseId),
-        String(req.params.id),
-        user.workspaceId,
-      );
+      .get(responseId, screeningId, user.workspaceId);
     if (!response) return fail(404, "Screening response not found.");
     const ids = new Set(
       (
@@ -686,8 +685,61 @@ export function registerScreeningRecordings(
         )
         .all(response.publication_id, user.workspaceId) as Recording[]
     ).filter((row) => ids.has(row.session_id));
-    return { user, rows };
+    return rows;
   }
+  function authorize(req: Request) {
+    const user = sessionUser(store, req);
+    if (!user) return fail(401, "Sign in to review interview recordings.");
+    return {
+      user,
+      rows: rowsFor(user, String(req.params.id), String(req.params.responseId)),
+    };
+  }
+  function transcript(row: Recording) {
+    const events = store.db
+      .prepare(
+        "SELECT id,sequence,kind,question_id,text,speech_start_ms,speech_end_ms,timing_source FROM screening_live_events WHERE session_id=? AND text IS NOT NULL ORDER BY sequence",
+      )
+      .all(row.session_id);
+    return events.map((event) => {
+      const start =
+        row.media_started_at !== null && event.speech_start_ms !== null
+          ? (Number(event.speech_start_ms) - row.media_started_at) / 1000
+          : null;
+      const end =
+        row.media_started_at !== null && event.speech_end_ms !== null
+          ? (Number(event.speech_end_ms) - row.media_started_at) / 1000
+          : null;
+      const aligned =
+        !!event.timing_source &&
+        start !== null &&
+        end !== null &&
+        Number.isFinite(start) &&
+        Number.isFinite(end) &&
+        end > Math.max(0, start) &&
+        start < row.duration &&
+        row.duration > 0;
+      return {
+        id: String(event.id),
+        sequence: event.sequence,
+        kind: event.kind,
+        questionId: event.question_id,
+        text: String(event.text),
+        startSeconds: aligned ? Math.max(0, start) : null,
+        endSeconds: aligned ? Math.min(row.duration, end) : null,
+        timingSource: aligned ? event.timing_source : null,
+      };
+    });
+  }
+  const media = registerScreeningMedia(app, store, {
+    env,
+    now,
+    processor: options.mediaProcessor,
+    authorize,
+    rowsFor,
+    transcript,
+    read: (row, signal) => provider().read(destination(row), undefined, signal),
+  });
   const base = "/api/screenings/:id/responses/:responseId/recordings";
   app.get(
     "/api/screening-recordings/status",
@@ -728,43 +780,29 @@ export function registerScreeningRecordings(
         row = rows.find((item) => item.id === req.params.recordingId);
       if (!row || row.state !== "ready" || row.expires_at <= now())
         return fail(404, "This recording is unavailable or has expired.");
-      const events = store.db
-        .prepare(
-          "SELECT id,sequence,kind,question_id,text,speech_start_ms,speech_end_ms,timing_source FROM screening_live_events WHERE session_id=? AND text IS NOT NULL ORDER BY sequence",
-        )
-        .all(row.session_id);
+      const wordAlignment = media.alignment(row);
+      const tokens = new Map(
+        wordAlignment?.turns.map((turn) => [turn.id, turn.tokens]) || [],
+      );
       res.setHeader("Cache-Control", "private, no-store");
       res.json({
-        synchronization: "approximate-utterance",
-        items: events.map((event) => {
-          const start =
-            row.media_started_at !== null && event.speech_start_ms !== null
-              ? (Number(event.speech_start_ms) - row.media_started_at) / 1000
-              : null;
-          const end =
-            row.media_started_at !== null && event.speech_end_ms !== null
-              ? (Number(event.speech_end_ms) - row.media_started_at) / 1000
-              : null;
-          const aligned =
-            !!event.timing_source &&
-            start !== null &&
-            end !== null &&
-            Number.isFinite(start) &&
-            Number.isFinite(end) &&
-            end > Math.max(0, start) &&
-            start < row.duration &&
-            row.duration > 0;
-          return {
-            id: event.id,
-            sequence: event.sequence,
-            kind: event.kind,
-            questionId: event.question_id,
-            text: event.text,
-            startSeconds: aligned ? Math.max(0, start) : null,
-            endSeconds: aligned ? Math.min(row.duration, end) : null,
-            timingSource: aligned ? event.timing_source : null,
-          };
-        }),
+        synchronization: wordAlignment
+          ? "matched-word-timestamps"
+          : "approximate-utterance",
+        wordAlignment: wordAlignment
+          ? {
+              jobId: wordAlignment.jobId,
+              model: wordAlignment.model,
+              matched: wordAlignment.matched,
+              total: wordAlignment.total,
+            }
+          : null,
+        items: transcript(row).map((turn) => ({
+          ...turn,
+          ...(tokens.has(String(turn.id))
+            ? { tokens: tokens.get(String(turn.id)) }
+            : {}),
+        })),
       });
     }),
   );
@@ -849,11 +887,13 @@ export function registerScreeningRecordings(
     }),
   );
   return {
+    media,
     startSession,
     stopSession,
     tick,
     start() {
       if (timer) return;
+      media.start();
       void tick();
       timer = setInterval(() => {
         void tick();
@@ -861,6 +901,7 @@ export function registerScreeningRecordings(
       timer.unref();
     },
     async stop() {
+      await media.stop();
       if (timer) clearInterval(timer);
       timer = undefined;
       await running;

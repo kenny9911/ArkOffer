@@ -414,7 +414,7 @@ Public projections never include raw transcripts, quotes, private report instruc
 - Signed live callbacks may include `timing:{source:"livekit-vad"|"livekit-playout",startedAtMs,endedAtMs}` with genuine Unix millisecond speech bounds. Candidate events require VAD provenance; interviewer events require playout provenance. State-only callbacks cannot carry timing. Optional fields keep old agents/callbacks compatible.
 - Recording metadata includes `hasMediaTimeline`; it is based on the Egress **file** start time. Job creation and callback arrival are not recording origins.
 - Private `GET /api/screenings/:id/responses/:responseId/recordings/:recordingId/transcript` returns `{synchronization:"approximate-utterance",items:[{id,sequence,kind,questionId,text,startSeconds,endSeconds,timingSource}]}`. It requires the same active member, submitted-session scope and ready/unexpired recording as playback. Unknown/legacy/out-of-range bounds are null. Valid turns are clamped to the media duration.
-- The UI uses these original-speech turns for search, seeking and active-turn highlighting. Candidate-edited final responses stay separate. No word-level alignment or inferred timestamps are provided.
+- The UI uses these original-speech turns for search, seeking and active-turn highlighting. Candidate-edited final responses stay separate. Optional ASR-derived word matching is described below; missing timestamps are never inferred.
 
 ## Advanced report analysis
 
@@ -427,3 +427,17 @@ Public projections never include raw transcripts, quotes, private report instruc
 - `GET /api/report-views/:id/runs/:runId/analysis.csv` exports the saved filtered result rows. `GET .../charts/:chartId.csv` exports one saved chart's current authorized aggregation. Both validate access/freshness at read time, reject incompatible analysis and escape formula-like string prefixes. Finite numeric negatives stay numbers. Existing full-result/grouped CSV routes remain unchanged in scope.
 
 Analysis operates on the already-authorized run, never raw hidden cells. Named viewers can read/export but not edit. Private analysis changes do not silently modify public report projections or subscription source/result counts.
+
+## Word timing and private video edits
+
+All paths below are relative to `/api/screenings/:id/responses/:responseId/recordings/:recordingId/studio`. They require the same ready, unexpired, submitted recording authority as the original player. Writes require an owner/admin. Members can read edits, jobs and ready exports.
+
+- `GET /` returns `{canEdit,capabilities:{clipping,alignment},edits,jobs,alignment}`. Capabilities expose only setup requirement names and the configured speech model. No processing starts on read.
+- `POST /edits` accepts `{title,segments:[{startSeconds,endSeconds,muted}]}` and returns `201 {edit}`. Up to twelve ranges, minimum 0.1 seconds each, in chosen output order; combined duration cannot exceed the source or thirty minutes. Up to twenty edits per recording.
+- `PUT /edits/:editId` also requires the original `revision`; conflicting saves return 409 without changing the saved edit. `DELETE /edits/:editId` accepts `{revision}`. Removing an edit preserves its already queued/completed export snapshots.
+- `POST /edits/:editId/export` accepts `{revision,requestKey}` and returns `202 {job}` for an immutable snapshot of that edit. `POST /alignment` accepts `{requestKey,consent:true}` and returns `202 {job}`. Request keys are UUIDs, idempotent within the recording and bound to the operation/revision; incompatible reuse returns 409.
+- Jobs use `queued`, `processing`, `ready`, `failed` or `cancelled`. At most two pending jobs per workspace and thirty retained jobs per recording. Inputs/outputs are bounded to 250 MiB, source duration to 30 minutes; the API job deadline is 10 minutes. Interrupted jobs fail on restart and require an explicit retry.
+- `DELETE /jobs/:jobId` cancels pending work or removes completed/failed history and its derived output. `GET /jobs/:jobId/media` serves a ready export with authenticated single byte-range support; `?download=1` requests attachment download. Source deletion/expiry immediately makes all child APIs unavailable and schedules durable local cleanup.
+- The original `/transcript` route retains all original speech text. A compatible successful alignment adds `wordAlignment:{jobId,model,matched,total}` and each turn's optional `tokens:[{text,startSeconds,endSeconds}]`; concatenating token text exactly reproduces the original turn. Timings are null for unmatched tokens. `synchronization` becomes `matched-word-timestamps`; otherwise it remains `approximate-utterance` with null wordAlignment. No original speech or candidate-corrected response is overwritten.
+
+Alignment uses actual word timestamps from the configured speech transcription provider, conservatively matched within original timed turns. It is not phonetic forced alignment. Job results bind to the recording and transcript fingerprint. Reauthorization covers the request session, workspace role and submitted source before/after asynchronous processing. Private artifact directories and cleanup tombstones are server-owned; no storage key, credential or filesystem path is returned.

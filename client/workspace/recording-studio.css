@@ -1,0 +1,134 @@
+.recording-studio {
+  margin-top: 18px;
+  border-top: 1px solid #dedede;
+  padding-top: 16px;
+}
+.recording-studio-body {
+  margin-top: 12px;
+}
+.recording-studio-body > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recording-studio h3,
+.recording-studio h4 {
+  margin: 4px 0 10px;
+}
+.recording-studio-body > section {
+  padding: 16px 0;
+  border-top: 1px solid #e6e6e6;
+}
+.recording-studio label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.recording-studio input:not([type="checkbox"]),
+.recording-studio select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  color: #242424;
+}
+.recording-studio .recording-studio-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.5;
+}
+.recording-studio-check input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.recording-studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+.recording-studio-actions a {
+  color: #285ba9;
+}
+.recording-studio-segments,
+.recording-studio-jobs {
+  padding: 0;
+  list-style: none;
+}
+.recording-studio-segments li {
+  margin: 12px 0;
+}
+.recording-studio fieldset {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  min-width: 0;
+  padding: 12px;
+}
+.recording-studio legend {
+  padding: 0 5px;
+  font-weight: 600;
+}
+.recording-studio-range {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(80px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+.recording-studio-range label {
+  margin: 0;
+}
+.recording-studio-range button {
+  min-height: 36px;
+}
+.recording-studio-confirm {
+  border: 1px solid #d8bb8b;
+  background: #fff8ec;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 12px 0;
+}
+.recording-studio-confirm button {
+  margin: 4px 8px 4px 0;
+}
+.recording-studio-jobs li {
+  padding: 12px 0;
+  border-bottom: 1px solid #e6e6e6;
+  overflow-wrap: anywhere;
+}
+.recording-studio :is(button, input, select, a):focus-visible {
+  outline: 2px solid #3566b8;
+  outline-offset: 3px;
+}
+.screening-recording-transcript .screening-word {
+  display: inline;
+  padding: 0 1px;
+  margin: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  white-space: pre-wrap;
+  text-decoration: underline dotted #8095b5;
+  text-underline-offset: 3px;
+}
+.screening-recording-transcript .screening-word:hover {
+  background: #dbe8fd;
+}
+.screening-recording-transcript .screening-word[aria-current="true"] {
+  background: #254d85;
+  color: white;
+}
+@media (max-width: 480px) {
+  .recording-studio-range {
+    grid-template-columns: 1fr;
+  }
+}

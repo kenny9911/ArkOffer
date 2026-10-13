@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import "./screening-recordings.css";
+import RecordingStudio from "./RecordingStudio";
 
 type Recording = {
   id: string;
@@ -156,6 +157,7 @@ export default function ScreeningRecordings({ path }: { path: string }) {
                     key={`${path}/${item.id}`}
                     path={`${path}/${item.id}`}
                     label={`Interview recording ${index + 1}`}
+                    duration={item.durationSeconds}
                     onError={() =>
                       setError(
                         "This recording could not be loaded. Refresh to check its availability.",
@@ -233,7 +235,13 @@ export default function ScreeningRecordings({ path }: { path: string }) {
   );
 }
 
+type TranscriptToken = {
+  text: string;
+  startSeconds: number | null;
+  endSeconds: number | null;
+};
 type TranscriptTurn = {
+  tokens?: TranscriptToken[];
   id: string;
   kind: string;
   text: string;
@@ -250,10 +258,12 @@ const speaker = (kind: string) =>
 function SynchronizedRecording({
   path,
   label,
+  duration,
   onError,
 }: {
   path: string;
   label: string;
+  duration: number;
   onError: () => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -268,6 +278,21 @@ function SynchronizedRecording({
   const [playing, setPlaying] = useState(false);
   const [follow, setFollow] = useState(true);
   const [rate, setRate] = useState(1);
+  const [mediaDuration, setMediaDuration] = useState(duration);
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0,
+      last = 0;
+    function update(now: number) {
+      if (now - last >= 50 && video.current) {
+        setTime(video.current.currentTime);
+        last = now;
+      }
+      frame = requestAnimationFrame(update);
+    }
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
   useEffect(() => {
     const controller = new AbortController();
     setError("");
@@ -299,7 +324,14 @@ function SynchronizedRecording({
       time >= turn.startSeconds &&
       time < turn.endSeconds,
   )?.id;
-  const timed = visible.filter((turn) => turn.startSeconds !== null);
+  const timed = visible.filter(
+    (turn) =>
+      turn.startSeconds !== null ||
+      turn.tokens?.some((token) => token.startSeconds !== null),
+  );
+  const hasWords = (turns || []).some((turn) =>
+    turn.tokens?.some((token) => token.startSeconds !== null),
+  );
   useEffect(() => {
     if (!follow || !activeRow.current || !list.current) return;
     const row = activeRow.current,
@@ -311,7 +343,7 @@ function SynchronizedRecording({
     )
       container.scrollTop = Math.max(0, top - 16);
   }, [active, follow, query]);
-  function seek(value: number) {
+  const seek = useCallback((value: number) => {
     const element = video.current;
     if (!element) return;
     const next = Math.max(
@@ -323,7 +355,11 @@ function SynchronizedRecording({
     if (!element.readyState) pendingSeek.current = next;
     else element.currentTime = next;
     setTime(next);
-  }
+  }, []);
+  const refreshTranscript = useCallback(
+    () => setRetry((value) => value + 1),
+    [],
+  );
   function toggle() {
     const element = video.current;
     if (!element) return;
@@ -343,7 +379,9 @@ function SynchronizedRecording({
         onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
-        onLoadedMetadata={() => {
+        onLoadedMetadata={(event) => {
+          if (Number.isFinite(event.currentTarget.duration))
+            setMediaDuration(event.currentTarget.duration);
           if (pendingSeek.current !== null) {
             seek(pendingSeek.current);
             pendingSeek.current = null;
@@ -402,8 +440,10 @@ function SynchronizedRecording({
       </div>
       <p className="screening-candidate-muted">
         Original speech transcript. Submitted answers may include candidate
-        corrections. Timestamps approximate each spoken turn using speech
-        detection and audio playout; they are not word-level alignment.
+        corrections.{" "}
+        {hasWords
+          ? "Underlined words have speech-recognition timings matched to the original transcript. Click a word to seek; unmatched words remain untimed. Word timings may be imperfect."
+          : "Timestamps approximate each spoken turn using speech detection and audio playout; word timing has not been generated for this transcript."}
       </p>
       <p className="screening-candidate-muted">
         Focus playback controls: Space or K to play/pause; ←/→ to seek 10
@@ -477,12 +517,66 @@ function SynchronizedRecording({
                     </span>
                   )}
                 </div>
-                <p>{turn.text}</p>
+                <TranscriptText
+                  turn={turn}
+                  activeWord={
+                    turn.tokens?.findIndex(
+                      (token) =>
+                        token.startSeconds !== null &&
+                        token.endSeconds !== null &&
+                        time >= token.startSeconds &&
+                        time < token.endSeconds,
+                    ) ?? -1
+                  }
+                  seek={seek}
+                />
               </li>
             ))}
           </ol>
         </>
       )}
+      <RecordingStudio
+        path={path}
+        video={video}
+        duration={mediaDuration}
+        seek={seek}
+        onAlignmentReady={refreshTranscript}
+      />
     </div>
   );
 }
+
+// Only the paragraph containing the changing active word needs to render again.
+const TranscriptText = memo(function TranscriptText({
+  turn,
+  activeWord,
+  seek,
+}: {
+  turn: TranscriptTurn;
+  activeWord: number;
+  seek: (value: number) => void;
+}) {
+  const tokens = turn.tokens;
+  return (
+    <p>
+      {tokens?.map((token) => token.text).join("") === turn.text
+        ? tokens.map((token, index) =>
+            token.startSeconds !== null && token.endSeconds !== null ? (
+              <button
+                key={index}
+                type="button"
+                className="screening-word"
+                aria-label={`Seek word ${token.text.trim()} at ${token.startSeconds.toFixed(2)} seconds`}
+                aria-current={activeWord === index ? "true" : undefined}
+                onClick={() => seek(token.startSeconds!)}
+              >
+                {token.text}
+              </button>
+            ) : (
+              <span key={index}>{token.text}</span>
+            ),
+          )
+        : turn.text}
+    </p>
+  );
+});
