@@ -27,6 +27,17 @@ import {
   presentationSchema,
 } from "./report-presentation.js";
 
+import {
+  defaultAnalysis,
+  type AnalysisMetadata,
+} from "../shared/report-analysis.js";
+import {
+  analysisSchema,
+  analysisIssue,
+  analyzeRun,
+  snapshotAnalysisMetadata,
+} from "./report-analysis.js";
+
 const LIMITS = {
   notes: 20,
   columns: 5,
@@ -109,7 +120,11 @@ const csv = (value: unknown) => {
       : typeof value === "object"
         ? JSON.stringify(value)
         : String(value);
-  if (/^[\s]*[=+\-@\t\r\n]/.test(text)) text = `'${text}`;
+  if (
+    !(typeof value === "number" && Number.isFinite(value)) &&
+    /^[\s]*[=+\-@\t\r\n]/.test(text)
+  )
+    text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 };
 
@@ -174,6 +189,36 @@ export function registerReportViews(
   ) {
     store.db.exec(
       "ALTER TABLE ai_report_views ADD COLUMN presentation_revision INTEGER NOT NULL DEFAULT 1",
+    );
+  }
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_views)")
+      .all()
+      .some((column) => column.name === "analysis")
+  ) {
+    store.db.exec(
+      `ALTER TABLE ai_report_views ADD COLUMN analysis TEXT NOT NULL DEFAULT '{"filters":{"logic":"all","conditions":[]},"charts":[]}'`,
+    );
+  }
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_views)")
+      .all()
+      .some((column) => column.name === "analysis_revision")
+  ) {
+    store.db.exec(
+      "ALTER TABLE ai_report_views ADD COLUMN analysis_revision INTEGER NOT NULL DEFAULT 1",
+    );
+  }
+  if (
+    !store.db
+      .prepare("PRAGMA table_info(ai_report_sources)")
+      .all()
+      .some((column) => column.name === "metadata_json")
+  ) {
+    store.db.exec(
+      "ALTER TABLE ai_report_sources ADD COLUMN metadata_json TEXT",
     );
   }
   initializeReportCollaboration(store);
@@ -297,6 +342,10 @@ export function registerReportViews(
         ? JSON.parse(String(row.presentation))
         : defaultPresentation,
       presentationRevision: Number(row.presentation_revision || 1),
+      analysis: row.analysis
+        ? JSON.parse(String(row.analysis))
+        : defaultAnalysis,
+      analysisRevision: Number(row.analysis_revision || 1),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -313,15 +362,18 @@ export function registerReportViews(
       const item = validSource(user, snapshot);
       if (!item)
         return {
-          id: snapshot.id,
+          id: String(snapshot.id),
           unavailable: true,
           status: "unavailable",
           cells: [],
         };
       const context = JSON.parse(String(snapshot.context_json));
       return {
-        id: snapshot.id,
+        id: String(snapshot.id),
         sourceId: snapshot.source_id,
+        metadata: snapshot.metadata_json
+          ? (JSON.parse(String(snapshot.metadata_json)) as AnalysisMetadata)
+          : null,
         title: context.title,
         status: snapshot.status,
         truncated: Boolean(snapshot.truncated),
@@ -346,7 +398,12 @@ export function registerReportViews(
     const presentation = JSON.parse(
       String(ownedView(user, String(row.view_id)).presentation),
     );
+    const analysis = analyzeRun(
+      { columns: definition.columns, rows },
+      JSON.parse(String(ownedView(user, String(row.view_id)).analysis)),
+    );
     return {
+      analysis,
       aggregation: aggregateRun(
         { columns: definition.columns, rows },
         presentation,
@@ -586,6 +643,134 @@ export function registerReportViews(
       .run(id, user.id, Number(input.favorite));
     res.json(detail(user, id));
   });
+  app.patch("/api/report-views/:id/analysis", (req, res) => {
+    const user = fresh(req),
+      id = String(req.params.id),
+      view = ownedView(user, id, "edit");
+    const input = z
+      .object({
+        revision: z.number().int().positive(),
+        runId: z.uuid().optional(),
+        analysis: analysisSchema,
+      })
+      .strict()
+      .parse(req.body);
+    if (input.revision !== Number(view.analysis_revision))
+      fail(
+        409,
+        "The analysis changed. Reload before saving; your edits have not been applied.",
+      );
+    const columns = JSON.parse(
+      String(
+        input.runId
+          ? ownedRun(user, id, input.runId).definition
+          : view.definition,
+      ),
+    ).columns;
+    const issue = analysisIssue(input.analysis, columns);
+    if (issue) fail(400, issue);
+    const changed = store.db
+      .prepare(
+        "UPDATE ai_report_views SET analysis=?,analysis_revision=analysis_revision+1,updated_at=? WHERE id=? AND analysis_revision=?",
+      )
+      .run(
+        JSON.stringify(input.analysis),
+        new Date().toISOString(),
+        id,
+        input.revision,
+      );
+    if (changed.changes !== 1)
+      fail(
+        409,
+        "The analysis changed. Reload before saving; your edits have not been applied.",
+      );
+    res.json(detail(user, id));
+  });
+  app.get("/api/report-views/:id/runs/:runId/analysis.csv", (req, res) => {
+    const user = fresh(req),
+      data = publicRun(
+        user,
+        ownedRun(user, String(req.params.id), String(req.params.runId)),
+      );
+    if (!data.analysis.compatible) fail(409, data.analysis.issue!);
+    const selected = new Set(data.analysis.matchingRowIds);
+    const lines: unknown[][] = [
+      ["Conversation", ...data.columns.map((column) => column.name)],
+    ];
+    for (const row of data.rows) {
+      if (row.unavailable || !selected.has(row.id)) continue;
+      lines.push([
+        row.title,
+        ...data.columns.map((column) => {
+          const cell = row.cells.find((cell) => cell.columnId === column.id);
+          return cell?.status === "complete"
+            ? cell.value
+            : cell?.status === "not_documented"
+              ? "Not documented"
+              : cell?.status || "Pending";
+        }),
+      ]);
+    }
+    res
+      .type("text/csv")
+      .setHeader(
+        "Content-Disposition",
+        'attachment; filename="filtered-report-results.csv"',
+      );
+    res.send(lines.map((line) => line.map(csv).join(",")).join("\r\n"));
+  });
+  app.get(
+    "/api/report-views/:id/runs/:runId/charts/:chartId.csv",
+    (req, res) => {
+      const user = fresh(req),
+        data = publicRun(
+          user,
+          ownedRun(user, String(req.params.id), String(req.params.runId)),
+        );
+      if (!data.analysis.compatible) fail(409, data.analysis.issue!);
+      const chart = data.analysis.charts.find(
+        (entry) => entry.chart.id === req.params.chartId,
+      );
+      if (!chart) fail(404, "Saved chart not found.");
+      if (!chart!.compatible) fail(409, chart!.issue!);
+      const lines: unknown[][] = [
+        [
+          "Group",
+          "Series",
+          "Currency",
+          "Operation",
+          "Value",
+          "Conversations",
+          "Documented values",
+        ],
+      ];
+      for (const group of chart!.groups)
+        lines.push([
+          group.label,
+          group.series,
+          group.unit,
+          chart!.chart.operation,
+          group.value,
+          group.rows,
+          group.values,
+        ]);
+      lines.push(
+        [],
+        ["Missing grouping or metric", chart!.missing],
+        ["Pending", chart!.pending],
+        ["Failed", chart!.failed],
+        ["Matching conversations", data.analysis.counts.matched],
+        ["Unavailable conversations", data.analysis.counts.unavailable],
+      );
+      res
+        .type("text/csv")
+        .setHeader(
+          "Content-Disposition",
+          'attachment; filename="saved-report-chart.csv"',
+        );
+      res.send(lines.map((line) => line.map(csv).join(",")).join("\r\n"));
+    },
+  );
   app.patch("/api/report-views/:id/presentation", (req, res) => {
     const user = fresh(req),
       id = String(req.params.id),
@@ -782,7 +967,7 @@ export function registerReportViews(
           snapshotId = randomUUID();
         store.db
           .prepare(
-            "INSERT INTO ai_report_sources(id,run_id,source_id,source_hash,context_hash,context_json,truncated,total_characters,status) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO ai_report_sources(id,run_id,source_id,source_hash,context_hash,context_json,truncated,total_characters,status,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
           )
           .run(
             snapshotId,
@@ -794,6 +979,7 @@ export function registerReportViews(
             Number(context.transcript.length < full.transcript.length),
             full.transcript.length,
             "queued",
+            JSON.stringify(snapshotAnalysisMetadata(item)),
           );
         for (const column of definition.columns)
           store.db

@@ -122,6 +122,19 @@ function tables(store: Store) {
     store.db.exec(
       "ALTER TABLE screening_live_sessions ADD COLUMN room_closed INTEGER NOT NULL DEFAULT 0",
     );
+  const eventColumns = store.db
+    .prepare("PRAGMA table_info(screening_live_events)")
+    .all();
+  for (const [name, type] of [
+    ["speech_start_ms", "INTEGER"],
+    ["speech_end_ms", "INTEGER"],
+    ["timing_source", "TEXT"],
+  ]) {
+    if (!eventColumns.some((column) => column.name === name))
+      store.db.exec(
+        `ALTER TABLE screening_live_events ADD COLUMN ${name} ${type}`,
+      );
+  }
   // Survives the session/publication/workspace cascade until the remote room is deleted.
   store.db
     .exec(`CREATE TABLE IF NOT EXISTS screening_live_room_cleanup (room_name TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
@@ -288,7 +301,7 @@ function publication(
 function publicSession(store: Store, row: Session) {
   const events = store.db
     .prepare(
-      "SELECT id,sequence,kind,question_id,text,created_at FROM screening_live_events WHERE session_id=? ORDER BY sequence",
+      "SELECT id,sequence,kind,question_id,text,created_at,speech_start_ms,speech_end_ms,timing_source FROM screening_live_events WHERE session_id=? ORDER BY sequence",
     )
     .all(row.id);
   return {
@@ -313,6 +326,13 @@ function publicSession(store: Store, row: Session) {
       questionId: event.question_id,
       text: event.text,
       createdAt: event.created_at,
+      timing: event.timing_source
+        ? {
+            source: event.timing_source,
+            startedAtMs: event.speech_start_ms,
+            endedAtMs: event.speech_end_ms,
+          }
+        : null,
     })),
   };
 }
@@ -428,6 +448,14 @@ export function registerLiveInterviewCallbacks(
           ]),
           questionId: z.uuid().optional(),
           text: z.string().trim().min(1).max(10_000).optional(),
+          timing: z
+            .object({
+              source: z.enum(["livekit-vad", "livekit-playout"]),
+              startedAtMs: z.number().int().positive().safe(),
+              endedAtMs: z.number().int().positive().safe(),
+            })
+            .strict()
+            .optional(),
         })
         .strict()
         .parse(body);
@@ -489,9 +517,29 @@ export function registerLiveInterviewCallbacks(
         return fail(400, "Transcript must reference a published question.");
       if (
         !transcriptKinds.includes(input.kind) &&
-        (input.text || input.questionId)
+        (input.text || input.questionId || input.timing)
       )
         return fail(400, "State callbacks cannot contain transcript data.");
+      if (input.timing) {
+        const { startedAtMs, endedAtMs, source } = input.timing;
+        const candidate = [
+          "answer",
+          "followup-answer",
+          "skip",
+          "followup-skip",
+        ].includes(input.kind);
+        if (
+          source !== (candidate ? "livekit-vad" : "livekit-playout") ||
+          endedAtMs <= startedAtMs ||
+          endedAtMs - startedAtMs > 1_800_000 ||
+          startedAtMs < Date.parse(session.created_at) - 30_000 ||
+          endedAtMs > Math.min(now(), session.expires_at) + 30_000
+        )
+          return fail(
+            400,
+            "Speech timing must match this interview and speaker.",
+          );
+      }
       if (
         ["answer", "skip"].includes(input.kind) &&
         store.db
@@ -556,7 +604,7 @@ export function registerLiveInterviewCallbacks(
         return fail(409, "Interview events must arrive in sequence.");
       store.db
         .prepare(
-          "INSERT INTO screening_live_events(id,session_id,event_hash,sequence,kind,question_id,text,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          "INSERT INTO screening_live_events(id,session_id,event_hash,sequence,kind,question_id,text,created_at,speech_start_ms,speech_end_ms,timing_source) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         )
         .run(
           input.eventId,
@@ -567,6 +615,9 @@ export function registerLiveInterviewCallbacks(
           input.questionId || null,
           input.text || null,
           new Date(now()).toISOString(),
+          input.timing?.startedAtMs ?? null,
+          input.timing?.endedAtMs ?? null,
+          input.timing?.source ?? null,
         );
       if (["ended", "error"].includes(input.kind))
         store.db

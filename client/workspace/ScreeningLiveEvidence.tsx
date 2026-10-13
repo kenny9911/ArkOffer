@@ -22,6 +22,11 @@ type Session = {
       | "followup-skip";
     text: string;
     createdAt: string;
+    timing?: {
+      source: "livekit-vad" | "livekit-playout";
+      startedAtMs: number;
+      endedAtMs: number;
+    } | null;
   }[];
 };
 
@@ -116,8 +121,17 @@ export default function ScreeningLiveEvidence({ path }: { path: string }) {
                             ? " · Follow-up"
                             : ""}
                         </strong>
-                        <time dateTime={event.createdAt}>
-                          {new Date(event.createdAt).toLocaleTimeString()}
+                        <time
+                          dateTime={
+                            event.timing
+                              ? new Date(event.timing.startedAtMs).toISOString()
+                              : event.createdAt
+                          }
+                        >
+                          {event.timing ? "Spoken " : "Received "}
+                          {new Date(
+                            event.timing?.startedAtMs ?? event.createdAt,
+                          ).toLocaleTimeString()}
                         </time>
                         <p>{event.text}</p>
                       </li>

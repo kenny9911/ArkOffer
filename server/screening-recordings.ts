@@ -35,6 +35,8 @@ export type RecordingJob = {
   key: string;
   size: number;
   duration: number;
+  /** Actual Egress file start, Unix milliseconds; absent for legacy/unknown jobs. */
+  startedAtMs?: number;
 };
 export type RecordingAdapter = {
   start(room: string, destination: Destination): Promise<RecordingJob>;
@@ -74,6 +76,7 @@ type Recording = {
   duration: number;
   stop_requested: number;
   updated_at: number;
+  media_started_at: number | null;
 };
 type Cleanup = Recording & { reconcile_until: number };
 class RecordingError extends Error {
@@ -167,6 +170,12 @@ function job(info: EgressInfo): RecordingJob {
     key: file?.filename || "",
     size: Number(file?.size || 0),
     duration: Number(file?.duration || 0) / 1e9,
+    // Egress FileInfo uses Unix nanoseconds. EgressInfo.startedAt is job start,
+    // not necessarily the first byte of this particular output file.
+    startedAtMs:
+      file?.startedAt && file.startedAt > 0n
+        ? Number(file.startedAt / 1_000_000n)
+        : undefined,
   };
 }
 /** Credentials stay in server memory. Playback always passes through current workspace authorization. */
@@ -322,6 +331,15 @@ function tables(store: Store) {
     END;`);
   if (
     !store.db
+      .prepare("PRAGMA table_info(screening_recordings)")
+      .all()
+      .some((column) => column.name === "media_started_at")
+  )
+    store.db.exec(
+      "ALTER TABLE screening_recordings ADD COLUMN media_started_at INTEGER",
+    );
+  if (
+    !store.db
       .prepare("PRAGMA table_info(screening_recording_cleanup)")
       .all()
       .some((column) => column.name === "updated_at")
@@ -371,13 +389,18 @@ export function registerScreeningRecordings(
               : "recording";
     store.db
       .prepare(
-        "UPDATE screening_recordings SET egress_id=?,state=?,size=?,duration=?,updated_at=? WHERE id=? AND state NOT IN ('deleting','deleted')",
+        "UPDATE screening_recordings SET egress_id=?,state=?,size=?,duration=?,media_started_at=COALESCE(?,media_started_at),updated_at=? WHERE id=? AND state NOT IN ('deleting','deleted')",
       )
       .run(
         result.id,
         state,
         Math.max(0, result.size),
         Math.max(0, result.duration),
+        Number.isSafeInteger(result.startedAtMs) &&
+          result.startedAtMs! >= row.created_at - 30_000 &&
+          result.startedAtMs! <= now() + 30_000
+          ? result.startedAtMs!
+          : null,
         now(),
         row.id,
       );
@@ -691,9 +714,57 @@ export function registerScreeningRecordings(
           consentAt: new Date(row.consent_at).toISOString(),
           expiresAt: new Date(row.expires_at).toISOString(),
           durationSeconds: row.duration,
+          hasMediaTimeline: row.media_started_at !== null,
           bytes: row.size,
           playable: row.state === "ready" && row.expires_at > now(),
         })),
+      });
+    }),
+  );
+  app.get(
+    `${base}/:recordingId/transcript`,
+    route((req, res) => {
+      const { rows } = authorize(req),
+        row = rows.find((item) => item.id === req.params.recordingId);
+      if (!row || row.state !== "ready" || row.expires_at <= now())
+        return fail(404, "This recording is unavailable or has expired.");
+      const events = store.db
+        .prepare(
+          "SELECT id,sequence,kind,question_id,text,speech_start_ms,speech_end_ms,timing_source FROM screening_live_events WHERE session_id=? AND text IS NOT NULL ORDER BY sequence",
+        )
+        .all(row.session_id);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({
+        synchronization: "approximate-utterance",
+        items: events.map((event) => {
+          const start =
+            row.media_started_at !== null && event.speech_start_ms !== null
+              ? (Number(event.speech_start_ms) - row.media_started_at) / 1000
+              : null;
+          const end =
+            row.media_started_at !== null && event.speech_end_ms !== null
+              ? (Number(event.speech_end_ms) - row.media_started_at) / 1000
+              : null;
+          const aligned =
+            !!event.timing_source &&
+            start !== null &&
+            end !== null &&
+            Number.isFinite(start) &&
+            Number.isFinite(end) &&
+            end > Math.max(0, start) &&
+            start < row.duration &&
+            row.duration > 0;
+          return {
+            id: event.id,
+            sequence: event.sequence,
+            kind: event.kind,
+            questionId: event.question_id,
+            text: event.text,
+            startSeconds: aligned ? Math.max(0, start) : null,
+            endSeconds: aligned ? Math.min(row.duration, end) : null,
+            timingSource: aligned ? event.timing_source : null,
+          };
+        }),
       });
     }),
   );

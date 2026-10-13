@@ -13,7 +13,7 @@ import openai as openai_sdk
 from livekit.agents import llm
 from livekit.plugins import openai as livekit_openai
 from adaptive import AdaptiveFollowUps, SYSTEM
-from agent import Callback, Interviewer, QuestionFlow, settings, validate_job
+from agent import Callback, Interviewer, QuestionFlow, settings, validate_job, speech_timing
 
 ENV = {
     "LIVEKIT_URL": "wss://test.livekit.cloud",
@@ -368,6 +368,73 @@ class AdaptiveTests(unittest.IsolatedAsyncioTestCase):
         data["questions"][0]["followUp"] = "true"
         with self.assertRaises(ValueError):
             validate_job(json.dumps(data), config)
+
+
+class SpeechTimingTests(unittest.IsolatedAsyncioTestCase):
+    def test_missing_or_invalid_metrics_never_fall_back_to_receipt_time(self):
+        for metrics in [{}, {"started_speaking_at": 1},
+                        {"started_speaking_at": float("nan"), "stopped_speaking_at": 2},
+                        {"started_speaking_at": 5, "stopped_speaking_at": 4},
+                        {"started_speaking_at": True, "stopped_speaking_at": 4}]:
+            self.assertIsNone(speech_timing(metrics, "livekit-vad"))
+        self.assertEqual(speech_timing({"started_speaking_at": 1700000001.125, "stopped_speaking_at": 1700000002.5}, "livekit-vad"),
+                         {"source": "livekit-vad", "startedAtMs": 1700000001125, "endedAtMs": 1700000002500})
+
+    async def test_sdk_chat_metrics_are_preserved_after_actual_prompt_playout(self):
+        q, next_q = question(followUp=False), question(followUp=False)
+        callback = AsyncMock()
+        interviewer = Interviewer({"questions": [q, next_q]}, callback, SyntheticModel("unused"))
+        finished = []
+        class Handle:
+            chat_items = [llm.ChatMessage(role="assistant", content=[next_q["prompt"]], created_at=99,
+                          metrics={"started_speaking_at": 1700000004.25, "stopped_speaking_at": 1700000006.5})]
+            def __await__(self):
+                async def play():
+                    finished.append(True)
+                return play().__await__()
+        session = SimpleNamespace(say=Mock(return_value=Handle()), shutdown=Mock())
+        async def capture(kind, *args, **kwargs):
+            if kind == "agent": self.assertEqual(finished, [True])
+        callback.send.side_effect = capture
+        with patch.object(Interviewer, "session", new_callable=PropertyMock, return_value=session):
+            with self.assertRaises(llm.StopResponse):
+                await interviewer.on_user_turn_completed(llm.ChatContext(), llm.ChatMessage(role="user", content=["Original speech"], created_at=88,
+                    metrics={"started_speaking_at": 1700000001.0, "stopped_speaking_at": 1700000003.0}))
+        self.assertEqual(callback.send.await_args_list[0].kwargs["timing"], {"source": "livekit-vad", "startedAtMs": 1700000001000, "endedAtMs": 1700000003000})
+        self.assertEqual(callback.send.await_args_list[1].kwargs["timing"], {"source": "livekit-playout", "startedAtMs": 1700000004250, "endedAtMs": 1700000006500})
+        session.say.assert_called_once_with(next_q["prompt"], allow_interruptions=False)
+
+    async def test_interrupted_or_partial_prompt_is_not_recorded_as_full_spoken_text(self):
+        q = question(followUp=False)
+        callback = AsyncMock()
+        interviewer = Interviewer({"questions": [q]}, callback, SyntheticModel("unused"))
+        for interrupted, spoken in [(True, q["prompt"]), (False, "Describe")]:
+            class Handle:
+                chat_items = [llm.ChatMessage(role="assistant", content=[spoken], interrupted=interrupted,
+                    metrics={"started_speaking_at": 1700000001.0, "stopped_speaking_at": 1700000002.0})]
+                def __await__(self):
+                    async def play(): pass
+                    return play().__await__()
+            session = SimpleNamespace(say=Mock(return_value=Handle()), shutdown=Mock())
+            with patch.object(Interviewer, "session", new_callable=PropertyMock, return_value=session):
+                with self.assertRaisesRegex(RuntimeError, "did not complete"):
+                    await interviewer.record_prompt(q["id"], q["prompt"])
+        callback.send.assert_not_awaited()
+
+    async def test_followup_is_spoken_once_before_signed_timing_evidence(self):
+        q = question()
+        generator, callback, speak = AsyncMock(), AsyncMock(), AsyncMock()
+        generator.generate.return_value = "What did you personally do?"
+        timing = {"source": "livekit-playout", "startedAtMs": 1700000001000, "endedAtMs": 1700000003000}
+        speak.return_value = timing
+        flow = QuestionFlow([q], callback, generator, speak)
+        await flow.spoken_answer("My project")
+        speak.assert_awaited_once_with("What did you personally do?")
+        self.assertTrue(flow.prompt_already_recorded)
+        self.assertEqual(callback.send.await_args_list[-1].kwargs, {"timing": timing})
+        await flow.spoken_answer("repeat")
+        self.assertFalse(flow.prompt_already_recorded)
+        speak.assert_awaited_once()
 
 
 if __name__ == "__main__":

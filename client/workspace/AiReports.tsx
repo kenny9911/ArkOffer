@@ -19,6 +19,13 @@ import {
 } from "lucide-react";
 import "./ai-reports.css";
 import ReportDrafting from "./ReportDrafting";
+import ReportAnalysis from "./ReportAnalysis";
+import {
+  defaultAnalysis,
+  type ReportAnalysis as AnalysisDefinition,
+  type AnalysisResult,
+  type AnalysisMetadata,
+} from "../../shared/report-analysis";
 import ReportCollaboration from "./ReportCollaboration";
 import ReportPresentation, {
   initialPresentation,
@@ -49,6 +56,8 @@ type Definition = {
   };
 };
 type View = Definition & {
+  analysis?: AnalysisDefinition;
+  analysisRevision?: number;
   id: string;
   revision: number;
   favorite?: boolean;
@@ -85,6 +94,7 @@ type Cell = {
   error: string | null;
 };
 type Run = {
+  analysis?: AnalysisResult;
   aggregation?: Aggregation;
   id: string;
   revision: number;
@@ -98,6 +108,7 @@ type Run = {
   rows: {
     id: string;
     sourceId?: string;
+    metadata?: AnalysisMetadata | null;
     title?: string;
     unavailable?: boolean;
     truncated?: boolean;
@@ -319,6 +330,8 @@ export default function AiReports() {
     [confirmDelete, setConfirmDelete] = useState(false),
     [selectedRun, setSelectedRun] = useState("");
   const [sharingOpen, setSharingOpen] = useState(0);
+  const [analysisOpen, setAnalysisOpen] = useState(false),
+    [showAllResults, setShowAllResults] = useState(false);
   const [listFilter, setListFilter] = useState("all");
   const [search, setSearch] = useState(""),
     [sort, setSort] = useState("updated"),
@@ -366,6 +379,8 @@ export default function AiReports() {
     setDetail(null);
     setConsent(false);
     setSelectedRun("");
+    setAnalysisOpen(false);
+    setShowAllResults(false);
     setConfirmDelete(false);
     setEditing(newReport);
     initialized.current = "";
@@ -476,6 +491,17 @@ export default function AiReports() {
       else await loadIndex();
     });
   }
+  const analysisFilterCount =
+    detail?.item.analysis?.filters.conditions.length || 0;
+  const matchingRowIds = new Set(run?.analysis?.matchingRowIds || []);
+  const filteredRows =
+    run?.rows.filter(
+      (row) =>
+        row.unavailable ||
+        showAllResults ||
+        !analysisFilterCount ||
+        (run.analysis?.compatible && matchingRowIds.has(row.id)),
+    ) || [];
   const resultsTable = run ? (
     <div className="ai-report-table-scroll report-evidence-table">
       <table aria-label="Report evidence">
@@ -491,7 +517,7 @@ export default function AiReports() {
           </tr>
         </thead>
         <tbody>
-          {run.rows.map((row) =>
+          {filteredRows.map((row) =>
             row.unavailable ? (
               <tr key={row.id}>
                 <td colSpan={run.columns.length + 1}>
@@ -532,6 +558,14 @@ export default function AiReports() {
                 })}
               </tr>
             ),
+          )}
+          {!filteredRows.length && (
+            <tr>
+              <td colSpan={run.columns.length + 1}>
+                No conversations match the saved result filters. Adjust the
+                filters or show all available results.
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
@@ -1244,6 +1278,22 @@ export default function AiReports() {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => setAnalysisOpen((open) => !open)}
+                    aria-expanded={analysisOpen}
+                  >
+                    <Filter size={14} /> Result filters
+                    {analysisFilterCount ? ` (${analysisFilterCount})` : ""}
+                  </button>
+                  {run.analysis?.compatible && (
+                    <a
+                      className="report-button"
+                      href={`/api/report-views/${selected}/runs/${run.id}/analysis.csv`}
+                    >
+                      Export filtered CSV
+                    </a>
+                  )}
                   {canEdit && active(run) && (
                     <button
                       disabled={busy}
@@ -1272,6 +1322,54 @@ export default function AiReports() {
                   </a>
                 </div>
               </div>
+            )}
+            {run && run.analysis && (
+              <div className="report-result-filter-summary">
+                <span role="status">
+                  {run.analysis.compatible
+                    ? `${run.analysis.counts.matched} of ${run.analysis.counts.available} available conversations match · ${run.analysis.counts.excluded} excluded · ${run.analysis.counts.unknown} unknown`
+                    : "Result filters are incompatible with this run"}{" "}
+                  · {run.analysis.counts.unavailable} unavailable
+                </span>
+                {!!analysisFilterCount && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={showAllResults}
+                      onChange={(event) =>
+                        setShowAllResults(event.target.checked)
+                      }
+                    />{" "}
+                    Show all available results
+                  </label>
+                )}
+                {showAllResults && !!analysisFilterCount && (
+                  <p>
+                    The table shows all available evidence. Saved charts and
+                    filtered exports still use the saved result filters.
+                  </p>
+                )}
+              </div>
+            )}
+            {detail && (
+              <ReportAnalysis
+                key={detail.item.id}
+                viewId={detail.item.id}
+                revision={detail.item.analysisRevision || 1}
+                saved={detail.item.analysis || defaultAnalysis}
+                columns={run?.columns || detail.item.columns}
+                result={run?.analysis}
+                runId={run?.id}
+                readOnly={!canEdit}
+                open={analysisOpen}
+                onOpenChange={setAnalysisOpen}
+                onSaved={async () => {
+                  await Promise.all([loadDetail(selected), loadIndex()]);
+                  setMessage(
+                    "Result filters and charts saved. No extraction was started.",
+                  );
+                }}
+              />
             )}
             {run?.error && <p className="ai-report-error">{run.error}</p>}
             {run && changed && (
@@ -1648,23 +1746,39 @@ export default function AiReports() {
               )}
               {panel === "charts" &&
                 (detail ? (
-                  <ReportPresentation
-                    key={`${detail.item.id}:${run?.id || "definition"}:${detail.item.presentationRevision || 1}`}
-                    viewId={detail.item.id}
-                    readOnly={!canEdit}
-                    revision={detail.item.presentationRevision || 1}
-                    saved={detail.item.presentation || initialPresentation}
-                    columns={run?.columns || detail.item.columns}
-                    aggregation={run?.aggregation}
-                    runId={run?.id}
-                    onSaved={async () => {
-                      await Promise.all([loadDetail(selected), loadIndex()]);
-                      setMessage(
-                        "Presentation saved. No extraction was started.",
-                      );
-                    }}
-                    onError={setError}
-                  />
+                  <>
+                    <div className="report-analysis-sidebar">
+                      <h3>Advanced analysis</h3>
+                      <p>
+                        Filter extracted answers and compare them in multiple
+                        named charts, including date trends and category splits.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAnalysisOpen(true)}
+                      >
+                        Configure result filters and charts
+                      </button>
+                    </div>
+                    <h3>Quick chart</h3>
+                    <ReportPresentation
+                      key={`${detail.item.id}:${run?.id || "definition"}:${detail.item.presentationRevision || 1}`}
+                      viewId={detail.item.id}
+                      readOnly={!canEdit}
+                      revision={detail.item.presentationRevision || 1}
+                      saved={detail.item.presentation || initialPresentation}
+                      columns={run?.columns || detail.item.columns}
+                      aggregation={run?.aggregation}
+                      runId={run?.id}
+                      onSaved={async () => {
+                        await Promise.all([loadDetail(selected), loadIndex()]);
+                        setMessage(
+                          "Presentation saved. No extraction was started.",
+                        );
+                      }}
+                      onError={setError}
+                    />
+                  </>
                 ) : (
                   <div className="report-charts-empty">
                     <Layers size={28} />
