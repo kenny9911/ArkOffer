@@ -36,6 +36,14 @@ There is at most one generation attempt per eligible question, with an eight-sec
 
 Callbacks keep the original published `questionId`: `answer` saves the original transcript; `followup-question` saves the authored clarification; `followup-answer` saves the candidate's actual clarification transcript. `skip` and `followup-skip` preserve the candidate's actual command as separate non-answer events. A repeat is an ordinary `agent` event and cannot consume another follow-up budget. The API independently checks eligibility, event order and the one-question/one-answer budget. The candidate's editable combined answer and separate original/follow-up evidence remain linked for review. This is a single clarification per published question; open-ended branching interviews and recruiter live attendance are not implemented by this runner.
 
+## Transcript-synchronized recording playback
+
+The agent attaches optional signed `timing` to spoken callbacks: `source` (`livekit-vad` for the candidate, `livekit-playout` for the interviewer), `startedAtMs`, and `endedAtMs` (Unix milliseconds). Candidate bounds come from `ChatMessage.metrics` on the completed user turn. Interviewer bounds come from `SpeechHandle.chat_items` after `session.say()` finishes actual playout. Interrupted or partial prompts stop the session rather than attaching the full planned question to a partial recording. Missing metrics remain untimed; message creation times and HTTP callback arrival times are never substitutes.
+
+The API stores these bounds and the Egress **file** `startedAt`, converts its nanoseconds to milliseconds, and computes recording-relative seconds for the private response-bound transcript endpoint. The reviewer can click a timestamp to seek, search original speech, follow the current turn, change playback speed, or use keyboard controls. Corrected submitted answers remain separate. Older recordings or agents without timing remain playable with a readable untimed transcript; expired/deleted recordings cannot expose a synchronized transcript through that endpoint.
+
+Synchronization is approximate at the spoken-turn level: SDK VAD and audio-playout bounds and the Egress service use their respective host clocks and can include network/buffering differences. Keep hosts time-synchronized; this is not word-level forced alignment. Source contracts were checked against installed LiveKit Agents 1.8.6 (`llm.MetricsReport`, `SpeechHandle.chat_items`, `voice.agent_activity`) and LiveKit Egress [file start-time handling](https://github.com/livekit/egress/blob/main/pkg/pipeline/controller.go). Live timing accuracy still requires a synthetic staging interview with configured providers.
+
 ## Test without microphone, credentials or provider calls
 
 ```sh

@@ -1172,3 +1172,65 @@ test("recording start failure closes the allocated room and never dispatches the
     1,
   );
 });
+
+test("signed speech timing is bounded, speaker-specific, replay-safe and optional for legacy agents", async () => {
+  const item = await setup(),
+    session = await start(item),
+    now = Date.now();
+  const event = {
+    eventId: randomUUID(),
+    sessionId: session.id,
+    sequence: 1,
+    kind: "answer",
+    questionId: item.questionId,
+    text: "Actual spoken answer",
+    timing: {
+      source: "livekit-vad",
+      startedAtMs: now - 1000,
+      endedAtMs: now - 100,
+    },
+  };
+  for (const timing of [
+    { ...event.timing, source: "livekit-playout" },
+    { ...event.timing, endedAtMs: now - 2000 },
+    { ...event.timing, startedAtMs: now - 100_000 },
+    { ...event.timing, endedAtMs: now + 60_000 },
+  ])
+    assert.equal((await callback({ ...event, timing })).status, 400);
+  assert.equal(
+    (
+      await callback({
+        ...event,
+        kind: "ready",
+        text: undefined,
+        questionId: undefined,
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await callback(event)).status, 200);
+  assert.equal((await (await callback(event)).json()).duplicate, true);
+  assert.equal(
+    (await callback({ ...event, timing: { ...event.timing, endedAtMs: now } }))
+      .status,
+    409,
+  );
+  const legacy = {
+    eventId: randomUUID(),
+    sessionId: session.id,
+    sequence: 2,
+    kind: "agent",
+    questionId: item.questionId,
+    text: "A legacy prompt",
+  };
+  assert.equal((await callback(legacy)).status, 200);
+  const data = await (
+    await request(`/api/interviews/${item.token}/live/sessions/${session.id}`)
+  ).json();
+  assert.deepEqual(data.item.events[0].timing, event.timing);
+  assert.equal(data.item.events[1].timing, null);
+  assert.notEqual(
+    data.item.events[0].timing.startedAtMs,
+    Date.parse(data.item.events[0].createdAt),
+  );
+});

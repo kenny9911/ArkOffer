@@ -192,3 +192,7 @@ See [SCREENING_DELIVERY_UPDATE.md](SCREENING_DELIVERY_UPDATE.md) for the current
 ## Screening recording, adaptive questions and public report results
 
 See [SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md](SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md) for separately consented LiveKit/S3 recording and authenticated range playback, bounded adaptive follow-ups with original-question evidence, and reviewed expiring public report projections. It supersedes earlier gaps for these features while preserving the distinct no-archive questionnaire audio path. Provider execution requires LiveKit, a running interview agent, speech services and private S3 configuration; offline adapter and browser tests do not establish that these external services are operating.
+
+## Synchronized screening playback and advanced report analysis
+
+[SCREENING_SYNC_REPORT_ANALYSIS_UPDATE.md](SCREENING_SYNC_REPORT_ANALYSIS_UPDATE.md) documents the genuine speech/Egress timing contract, legacy untimed fallback, private searchable transcript playback, independently revisioned result filters and multiple chart configurations. New runs capture immutable analysis metadata; old runs are never backfilled from current source records. Existing public links and subscription counts remain independent of private analysis settings.

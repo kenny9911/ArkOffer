@@ -7,10 +7,12 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 import uuid
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -169,6 +171,18 @@ def validate_job(raw: str, config: dict) -> dict:
     return data
 
 
+def speech_timing(metrics: dict, source: str) -> dict | None:
+    """SDK speech bounds only; creation/receipt times are never media evidence."""
+    start, end = metrics.get("started_speaking_at"), metrics.get("stopped_speaking_at")
+    if any(isinstance(value, bool) or not isinstance(value, (float, int))
+           or not math.isfinite(value) for value in (start, end)):
+        return None
+    if not 0 < start < end or end - start > 1800:
+        return None
+    return {"source": source, "startedAtMs": round(start * 1000),
+            "endedAtMs": round(end * 1000)}
+
+
 class Callback:
     """Ordered, authenticated, idempotent events; no transcript in query strings/logs."""
 
@@ -178,7 +192,8 @@ class Callback:
         self.lock = asyncio.Lock()
 
     async def send(
-        self, kind: str, question_id: str | None = None, text: str | None = None
+        self, kind: str, question_id: str | None = None, text: str | None = None,
+        *, timing: dict | None = None
     ):
         async with self.lock:
             payload = {
@@ -191,6 +206,8 @@ class Callback:
                 payload["questionId"] = question_id
             if text is not None:
                 payload["text"] = text
+            if timing is not None:
+                payload["timing"] = timing
             body = json.dumps(
                 payload, separators=(",", ":"), ensure_ascii=False
             ).encode()
@@ -230,9 +247,10 @@ class QuestionFlow:
         questions: list[dict],
         callback: Callback,
         followups: AdaptiveFollowUps | None = None,
+        speak: Callable[[str], Awaitable[dict | None]] | None = None,
     ):
         self.questions, self.callback, self.index = questions, callback, 0
-        self.followups = followups
+        self.followups, self.speak = followups, speak
         self.followup_prompt: str | None = None
         self.attempted: set[str] = set()
         self.prompt_already_recorded = False
@@ -249,8 +267,9 @@ class QuestionFlow:
             text += " Choose one: " + "; ".join(question["options"]) + "."
         return text
 
-    async def spoken_answer(self, text: str) -> tuple[str, str] | None:
+    async def spoken_answer(self, text: str, timing: dict | None = None) -> tuple[str, str] | None:
         self.prompt_already_recorded = False
+        timing_args = {"timing": timing} if timing is not None else {}
         if not text.strip() or self.index >= len(self.questions):
             return None
         question = self.questions[self.index]
@@ -285,6 +304,7 @@ class QuestionFlow:
                 "followup-skip" if self.followup_prompt else "skip",
                 question["id"],
                 text.strip(),
+                **timing_args,
             )
             self.followup_prompt = None
             return self.advance()
@@ -293,6 +313,7 @@ class QuestionFlow:
             "followup-answer" if self.followup_prompt else "answer",
             question["id"],
             text.strip(),
+            **timing_args,
         )
         if self.followup_prompt is not None:
             self.followup_prompt = None
@@ -311,7 +332,9 @@ class QuestionFlow:
             except Exception:
                 prompt = None
             if prompt is not None:
-                await self.callback.send("followup-question", question["id"], prompt)
+                spoken = await self.speak(prompt) if self.speak else None
+                await self.callback.send("followup-question", question["id"], prompt,
+                                         **({"timing": spoken} if spoken else {}))
                 self.followup_prompt = prompt
                 self.prompt_already_recorded = True
                 return question["id"], prompt
@@ -334,7 +357,34 @@ class Interviewer(Agent):
             job["questions"],
             callback,
             AdaptiveFollowUps(model, language=job.get("language", "en-US")),
+            self.speak,
         )
+
+    async def speak(self, text: str) -> dict | None:
+        handle = self.session.say(text, allow_interruptions=False)
+        await handle
+        # SpeechHandle.chat_items is populated after actual audio playout. The
+        # message's created_at is deliberately not used as a substitute.
+        messages = [item for item in getattr(handle, "chat_items", [])
+                    if isinstance(item, llm.ChatMessage) and item.role == "assistant"]
+        if hasattr(handle, "chat_items") and (not messages or
+            any(item.interrupted for item in messages) or
+            "".join(item.text_content or "" for item in messages).strip() != text.strip()):
+            # Shutdown can interrupt even non-interruptible prompts. Do not bind
+            # the entire planned question to a partial or absent spoken message.
+            raise RuntimeError("Interview prompt did not complete")
+        bounds = [speech_timing(item.metrics, "livekit-playout") for item in messages]
+        known = [bound for bound in bounds if bound is not None]
+        if not known:
+            return None
+        return {"source": "livekit-playout",
+                "startedAtMs": min(bound["startedAtMs"] for bound in known),
+                "endedAtMs": max(bound["endedAtMs"] for bound in known)}
+
+    async def record_prompt(self, identity: str, text: str):
+        timing = await self.speak(text)
+        await self.callback.send("agent", identity, text,
+                                 **({"timing": timing} if timing else {}))
 
     async def on_enter(self):
         await self.callback.send("ready")
@@ -346,8 +396,7 @@ class Interviewer(Agent):
             + " Say repeat to hear the current question again, or skip to move to the next question. "
             + self.flow.prompt()
         )
-        await self.callback.send("agent", self.flow.questions[0]["id"], text)
-        await self.session.say(text, allow_interruptions=False)
+        await self.record_prompt(self.flow.questions[0]["id"], text)
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -357,7 +406,9 @@ class Interviewer(Agent):
             raise llm.StopResponse()
         async with self.flow.lock:
             try:
-                next_question = await self.flow.spoken_answer(text)
+                next_question = await self.flow.spoken_answer(
+                    text, speech_timing(new_message.metrics, "livekit-vad")
+                )
                 if next_question is None:
                     await self.session.say(
                         self.job.get("completionMessage")
@@ -371,8 +422,7 @@ class Interviewer(Agent):
                     # Published questions are exact. Adaptive questions come from
                     # authored neutral templates, never raw model-generated speech.
                     if not self.flow.prompt_already_recorded:
-                        await self.callback.send("agent", identity, prompt)
-                    await self.session.say(prompt, allow_interruptions=False)
+                        await self.record_prompt(identity, prompt)
             except Exception:
                 self.session.shutdown(drain=False)
                 raise

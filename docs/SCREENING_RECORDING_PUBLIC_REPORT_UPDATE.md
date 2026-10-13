@@ -2,6 +2,8 @@
 
 This delivery continues the [Screening and Reports reconstruction](SCREENING_REPORTS_UPDATE.md) and [delivery workflows](SCREENING_DELIVERY_UPDATE.md). It implements the three requested features independently, using the earlier signed-in observations and partial static REA evidence. It does not establish complete Metaview functionality, private backend equivalence or live provider operation.
 
+> The later [synchronized playback and report analysis update](SCREENING_SYNC_REPORT_ANALYSIS_UPDATE.md) adds utterance timing, transcript seeking and advanced result filters/charts. Earlier remaining-gap statements are historical where superseded.
+
 ## Consented video recording
 
 A saved live screening can enable recording and choose 1–90 days of retention (default 30). Publication and invitation delivery check configuration. Candidates separately consent to recording before joining, in addition to live transcription consent. Camera policy remains required, optional or off; only published tracks are captured. The AI agent subscribes to audio and does not analyze appearance.

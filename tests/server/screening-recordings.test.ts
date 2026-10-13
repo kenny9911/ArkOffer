@@ -716,3 +716,129 @@ test("partial version deletion never reports permanent success", async () => {
     S3Client.prototype.send = original;
   }
 });
+
+test("recording transcript aligns SDK speech bounds to the actual file start and never callback arrival", async () => {
+  const item = setup(),
+    recording = await service.startSession(item.sessionId, true);
+  jobs.get(item.room)!.startedAtMs = time + 1000;
+  await service.stopSession(item.sessionId);
+  const path = submit(item);
+  const insert = store.db.prepare(
+    "INSERT INTO screening_live_events(id,session_id,event_hash,sequence,kind,question_id,text,created_at,speech_start_ms,speech_end_ms,timing_source) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+  );
+  const add = (
+    sequence: number,
+    start: number | null,
+    end: number | null,
+    source: string | null,
+    text: string,
+  ) =>
+    insert.run(
+      randomUUID(),
+      item.sessionId,
+      String(sequence),
+      sequence,
+      "answer",
+      randomUUID(),
+      text,
+      new Date(time + 900_000).toISOString(),
+      start,
+      end,
+      source,
+    );
+  add(1, time + 3000, time + 5000, "livekit-vad", "Original spoken answer");
+  add(2, null, null, null, "Legacy untimed speech");
+  add(3, time - 1000, time + 2000, "livekit-vad", "Partly before recording");
+  add(4, time + 20_000, time + 22_000, "livekit-vad", "Outside recording");
+  add(5, time + 11_000, time + 15_000, "livekit-vad", "Partly after recording");
+  const response = await request(`${path}/${recording!.id}/transcript`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control")!, /no-store/);
+  const data = await response.json();
+  assert.equal(data.synchronization, "approximate-utterance");
+  assert.deepEqual(
+    data.items.map(
+      (turn: { startSeconds: number | null; endSeconds: number | null }) => [
+        turn.startSeconds,
+        turn.endSeconds,
+      ],
+    ),
+    [
+      [2, 4],
+      [null, null],
+      [0, 1],
+      [null, null],
+      [10, 12],
+    ],
+  );
+  assert.equal(data.items[0].text, "Original spoken answer");
+  assert.equal(
+    JSON.stringify(data).includes("An answer"),
+    false,
+    "candidate-corrected form text is not the speech transcript",
+  );
+  assert.equal(
+    (await request(`${path}/${recording!.id}/transcript`, "GET", "")).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(
+        `${path}/${recording!.id}/transcript`,
+        "GET",
+        outsider.cookie,
+      )
+    ).status,
+    404,
+  );
+  store.db
+    .prepare("UPDATE screening_recordings SET media_started_at=NULL WHERE id=?")
+    .run(recording!.id);
+  const legacy = await (
+    await request(`${path}/${recording!.id}/transcript`)
+  ).json();
+  assert.ok(
+    legacy.items.every(
+      (turn: { startSeconds: unknown }) => turn.startSeconds === null,
+    ),
+  );
+  store.db
+    .prepare("UPDATE screening_recordings SET expires_at=? WHERE id=?")
+    .run(time - 1, recording!.id);
+  assert.equal(
+    (await request(`${path}/${recording!.id}/transcript`)).status,
+    404,
+  );
+});
+
+test("Egress adapter reads file nanosecond origin instead of job creation time", async () => {
+  const original = EgressClient.prototype.startRoomCompositeEgress;
+  EgressClient.prototype.startRoomCompositeEgress = async function () {
+    return new EgressInfo({
+      egressId: "timed-egress",
+      roomName: "timed-room",
+      status: 3,
+      startedAt: 1_700_000_000_000_000_000n,
+      fileResults: [
+        {
+          filename: "controlled/timed.mp4",
+          startedAt: 1_700_000_005_123_456_789n,
+          duration: 12_000_000_000n,
+          size: 10n,
+        },
+      ],
+    });
+  } as typeof original;
+  try {
+    const result = await createRecordingAdapter(env).start("timed-room", {
+      bucket: "private",
+      key: "controlled/timed.mp4",
+      endpoint: "https://storage.example",
+      region: "us-east-1",
+    });
+    assert.equal(result.startedAtMs, 1_700_000_005_123);
+    assert.equal(result.duration, 12);
+  } finally {
+    EgressClient.prototype.startRoomCompositeEgress = original;
+  }
+});
