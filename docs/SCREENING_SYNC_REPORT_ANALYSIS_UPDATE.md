@@ -1,5 +1,7 @@
 # Synchronized interview playback and report analysis — 13 October 2026
 
+Follow-up: the [word timing and video editing update](SCREENING_WORD_TIMING_VIDEO_EDITING_UPDATE.md) advances the media gaps listed here. This document records the earlier delivery.
+
 This continues the [recording and public report delivery](SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md), using the previous signed-in observations and partial static REA evidence as the source baseline. It adds independent ArkOffer workflows; it does not establish complete Metaview functionality or private backend equivalence.
 
 ## Transcript-synchronized playback

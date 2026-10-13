@@ -29,6 +29,8 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
+      - name: Install video processing tools
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
       - run: npm test
       - run: npm run build
       - run: npx playwright install --with-deps chromium

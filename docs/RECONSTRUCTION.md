@@ -196,3 +196,7 @@ See [SCREENING_RECORDING_PUBLIC_REPORT_UPDATE.md](SCREENING_RECORDING_PUBLIC_REP
 ## Synchronized screening playback and advanced report analysis
 
 [SCREENING_SYNC_REPORT_ANALYSIS_UPDATE.md](SCREENING_SYNC_REPORT_ANALYSIS_UPDATE.md) documents the genuine speech/Egress timing contract, legacy untimed fallback, private searchable transcript playback, independently revisioned result filters and multiple chart configurations. New runs capture immutable analysis metadata; old runs are never backfilled from current source records. Existing public links and subscription counts remain independent of private analysis settings.
+
+## Word timing and private video editing
+
+See the [recording studio delivery](SCREENING_WORD_TIMING_VIDEO_EDITING_UPDATE.md) for measured word matching, saved cut/mute/reorder edits, private MP4 exports and inherited source cleanup. [Processor setup](SCREENING_MEDIA_PROCESSOR.md) documents FFmpeg and the existing speech-provider settings.
